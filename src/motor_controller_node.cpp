@@ -22,6 +22,44 @@ void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr& msg)
   cmd_vel = *msg;
 }
 
+bool connect_controller(PhidgetDCMotorHandle *ch){
+
+  PhidgetReturnCode res;
+
+	PhidgetDCMotor_create(ch);
+
+  ROS_INFO("Connecting to device...");
+
+	res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, 1000);
+	if (res != EPHIDGET_OK){
+		ROS_INFO("Connection Failed; code: 0x%x", res); // Exit in error
+    return false;
+  }
+  else{
+    ROS_INFO("Connectd");
+    return true;
+  }
+}
+
+bool connect_temp_sens(PhidgetTemperatureSensorHandle* ch){
+	
+  PhidgetReturnCode res;
+  PhidgetTemperatureSensor_create(ch);
+
+  ROS_INFO("Connecting to the temperature sensor");
+
+  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, PHIDGET_TIMEOUT_DEFAULT);
+	if (res != EPHIDGET_OK){
+    ROS_INFO("Connection to the temp sensor failed; error 0x%x", res);
+		return false;
+  }
+  else{
+    ROS_INFO("Connection to the temp sensor successful");
+    return true;
+  }
+
+
+}
 
 int main(int argc, char **argv)
 {
@@ -66,19 +104,21 @@ int main(int argc, char **argv)
 
   ros::Rate loop_rate(10);
 
-  PhidgetReturnCode res;
 	PhidgetDCMotorHandle ch;
 
-	PhidgetDCMotor_create(&ch);
-
-  ROS_INFO("Connecting to device...");
-
-	res = Phidget_openWaitForAttachment((PhidgetHandle)ch, 1000);
-	if (res != EPHIDGET_OK)
-		ROS_INFO("Connection Failed; code: 0x%x", res); // Exit in error
-  else{
-    ROS_INFO("Connectd");
+  if(connect_controller(&ch)){
+    PhidgetDCMotor_setFanMode(ch, FAN_MODE_ON);
+    // PhidgetDCMotor_setTargetVelocity(ch, 0.35);    
   }
+
+  PhidgetTemperatureSensorHandle ch_tmp;
+
+  if(connect_temp_sens(&ch_tmp)){
+    double temp;
+    PhidgetTemperatureSensor_getTemperature(ch_tmp, &temp);
+    ROS_INFO("Temperatur: %g", temp);
+  }
+  
 
 
   
