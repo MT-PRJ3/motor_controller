@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(motor_controller)
 
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I/home/christoph/catkin_ws/src/motor_controller/libphidget22")
+
+FIND_LIBRARY(LIBPHIDGET22 phidget22 /home/christoph/catkin_ws/src/motor_controller/libphidget22)
+
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
 
@@ -18,7 +22,7 @@ find_package(catkin REQUIRED COMPONENTS
 
 ## System dependencies are found with CMake's conventions
 # find_package(Boost REQUIRED COMPONENTS system)
-
+FIND_LIBRARY(lphidget22 phidget22 )
 
 ## Uncomment this if the package has a setup.py. This macro ensures
 ## modules and global scripts declared therein get installed
@@ -149,8 +153,10 @@ add_executable(${PROJECT_NAME}_node src/motor_controller_node.cpp)
 add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
-target_link_libraries(${PROJECT_NAME}_node
+target_link_libraries(
+  ${PROJECT_NAME}_node
   ${catkin_LIBRARIES}
+  ${LIBPHIDGET22}
 )
 
 #############

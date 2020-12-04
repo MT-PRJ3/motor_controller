@@ -1,8 +1,10 @@
 #include "ros/ros.h"
 #include "std_msgs/String.h"
 #include "geometry_msgs/Twist.h"
-#include "phidgets_api/motor.h"
-#include "phidgets_api/phidget.h"
+//#include "phidgets_api/motor.h"
+//#include "phidgets_api/phidget.h"
+#include <stdlib.h>
+#include "phidget22.h"
 
 #include <string.h>
 
@@ -64,10 +66,27 @@ int main(int argc, char **argv)
 
   ros::Rate loop_rate(10);
 
-  phidgets::MotorController* controller = new phidgets::MotorController();
-  ROS_INFO("Trying to connect to any MotorController");    
+  PhidgetReturnCode res;
+	PhidgetDCMotorHandle ch;
 
-  ROS_INFO("Supply Voltage: %g", controller->getSupplyVoltage());
+	PhidgetDCMotor_create(&ch);
+
+  ROS_INFO("Connecting to device...");
+
+	res = Phidget_openWaitForAttachment((PhidgetHandle)ch, 1000);
+	if (res != EPHIDGET_OK)
+		ROS_INFO("Connection Failed; code: 0x%x", res); // Exit in error
+  else{
+    ROS_INFO("Connectd");
+  }
+
+
+  
+
+  // phidgets::MotorController* controller = new phidgets::MotorController();
+  // ROS_INFO("Trying to connect to any MotorController");    
+
+  // ROS_INFO("Supply Voltage: %g", controller->getSupplyVoltage());
   std_msgs::String msg;
   // std::stringstream ret;
 
@@ -113,6 +132,9 @@ int main(int argc, char **argv)
     loop_rate.sleep();
     ++count;
   }
+
+	PhidgetDCMotor_delete(&ch);
+
 
 
   return 0;
