@@ -107,9 +107,13 @@ int main(int argc, char **argv)
 	PhidgetDCMotorHandle ch;
 
   if(connect_controller(&ch)){
-    PhidgetDCMotor_setFanMode(ch, FAN_MODE_ON);
-    // PhidgetDCMotor_setTargetVelocity(ch, 0.35);    
+    PhidgetDCMotor_setFanMode(ch, FAN_MODE_OFF);
   }
+  else
+  {
+    return -1;
+  }
+  
 
   PhidgetTemperatureSensorHandle ch_tmp;
 
@@ -157,8 +161,13 @@ int main(int argc, char **argv)
     ss << std::to_string(cmd_vel.linear.x) << " " << count;
     msg.data = ss.str();
 
-    //ROS_INFO("%s", msg.data.c_str());
 
+    PhidgetDCMotor_setTargetVelocity(ch, cmd_vel.linear.x);    
+
+    //ROS_INFO("%s", msg.data.c_str());
+    double temp;
+    PhidgetTemperatureSensor_getTemperature(ch_tmp, &temp);
+    ROS_INFO("Temperatur: %g", temp);
     /**
      * The publish() function is how you send messages. The parameter
      * is the message object. The type of this object must agree with the type
