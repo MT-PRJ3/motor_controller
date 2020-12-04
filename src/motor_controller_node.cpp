@@ -2,6 +2,7 @@
 #include "std_msgs/String.h"
 #include "geometry_msgs/Twist.h"
 #include "phidgets_api/motor.h"
+#include "phidgets_api/phidget.h"
 
 #include <string.h>
 
@@ -12,11 +13,11 @@
  * This tutorial demonstrates simple sending of messages over the ROS system.
  */
 
-std::string str;
+geometry_msgs::Twist cmd_vel;
 
 void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr& msg)
 {
-  str = "Nachricht empfangen; v_lin = " + std::to_string(msg->linear.x);
+  cmd_vel = *msg;
 }
 
 
@@ -63,6 +64,25 @@ int main(int argc, char **argv)
 
   ros::Rate loop_rate(10);
 
+  phidgets::MotorController* controller = new phidgets::MotorController();
+  ROS_INFO("Trying to connect to any MotorController");    
+
+  ROS_INFO("Supply Voltage: %g", controller->getSupplyVoltage());
+  std_msgs::String msg;
+  // std::stringstream ret;
+
+  // int err_code = phidget->openAndWaitForAttachment(620709, 1000);
+  // if(err_code == 0){
+  //   ROS_INFO("Connected successfully!");
+  // }
+  // else{
+  //   ret << phidget->getErrorDescription(err_code);
+  //   msg.data = ret.str();
+  //   ROS_INFO("%s", msg.data.c_str());
+  //   ROS_INFO("(ERROR_CODE %d)", err_code);
+  // }
+  
+
   /**
    * A count of how many messages we have sent. This is used to create
    * a unique string for each message.
@@ -73,13 +93,12 @@ int main(int argc, char **argv)
     /**
      * This is a message object. You stuff it with data, and then publish it.
      */
-    std_msgs::String msg;
 
     std::stringstream ss;
-    ss << str << count;
+    ss << std::to_string(cmd_vel.linear.x) << " " << count;
     msg.data = ss.str();
 
-    ROS_INFO("%s", msg.data.c_str());
+    //ROS_INFO("%s", msg.data.c_str());
 
     /**
      * The publish() function is how you send messages. The parameter
