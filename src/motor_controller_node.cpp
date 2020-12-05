@@ -13,7 +13,7 @@
 #include <sstream>
 
 #define AXLE_WIDTH 0.5      // [m]
-#define TIRE_RADIUS 0.13    // [m]
+#define TIRE_RADIUS 0.065   // [m]
 #define V_WHEEL_MAX 1.0     // [m/s]
 #define V_LIN_MAX 1.0       // [m/s]
 #define V_ANG_MAX 0.5       // [rad/s]
@@ -49,7 +49,26 @@ bool connect_controller(PhidgetDCMotorHandle *ch){
   }
 }
 
-void calculate_v(geometry_msgs::Twist cmd_vel, int* rps_l, int* rps_r){
+bool connect_temp_sens(PhidgetTemperatureSensorHandle* ch){
+	
+  PhidgetReturnCode res;
+
+  PhidgetTemperatureSensor_create(ch);
+
+  ROS_INFO("Connecting to the temperature sensor");
+
+  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, PHIDGET_TIMEOUT_DEFAULT);
+	if (res != EPHIDGET_OK){
+    ROS_INFO("Connection to the temp sensor failed; error 0x%x", res);
+		return false;
+  }
+  else{
+    ROS_INFO("Connection to the temp sensor successful");
+    return true;
+  }
+}
+
+void calculate_v(geometry_msgs::Twist cmd_vel, double* rps_l, double* rps_r){
 
   //saturate cmd_vel values
 
@@ -63,26 +82,26 @@ void calculate_v(geometry_msgs::Twist cmd_vel, int* rps_l, int* rps_r){
     ROS_INFO("Linear velocity limited to %g m/s", V_LIN_MAX);
   }
 
-  if(abs(cmd_vel.angular.x) > V_ANG_MAX){
-    if(cmd_vel.angular.x > 0){
-      cmd_vel.angular.x = V_ANG_MAX;
+  if(abs(cmd_vel.angular.z) > V_ANG_MAX){
+    if(cmd_vel.angular.z > 0){
+      cmd_vel.angular.z = V_ANG_MAX;
     }
     else{
-      cmd_vel.angular.x = -V_ANG_MAX;
+      cmd_vel.angular.z = -V_ANG_MAX;
     }
     ROS_INFO("Angular velocity limited to %g rad/s", V_ANG_MAX);
   }
 
   // calculate linear velocity
-  int v_lin_l = cmd_vel.linear.x;
-  int v_lin_r = cmd_vel.linear.x;
+  double v_lin_l = cmd_vel.linear.x;
+  double v_lin_r = cmd_vel.linear.x;
 
   // calculate angular velocity
-  int d_v_ang = cmd_vel.angular.z * AXLE_WIDTH; // delta v in [m/s]
+  double d_v_ang = cmd_vel.angular.z * AXLE_WIDTH; // delta v in [m/s]
 
   // superposition of v_lin and v_ang
-  int v_l = v_lin_l + d_v_ang/2;
-  int v_r = v_lin_r - d_v_ang/2;
+  double v_l = v_lin_l + d_v_ang/2;
+  double v_r = v_lin_r - d_v_ang/2;
   // saturate
   if(abs(v_l) > V_WHEEL_MAX){
     v_l = v_l * V_WHEEL_MAX / abs(v_l);
@@ -97,8 +116,10 @@ void calculate_v(geometry_msgs::Twist cmd_vel, int* rps_l, int* rps_r){
   }
 
   // convert to rounds per second
-    rps_l = v_l / TIRE_CIRCUMFERENCE;
-    rps_r = v_R / TIRE_CIRCUMFERENCE;
+    *rps_l = v_l / TIRE_CIRCUMFERENCE;
+    *rps_r = v_r / TIRE_CIRCUMFERENCE;
+
+
 }
 
 
@@ -148,10 +169,11 @@ int main(int argc, char **argv)
 	PhidgetDCMotorHandle ch;
 
   if(connect_controller(&ch)){
-    PhidgetDCMotor_setFanMode(ch, FAN_MODE_OFF);
+    PhidgetDCMotor_setFanMode(ch, FAN_MODE_AUTO);
   }
   else
   {
+    ROS_INFO("Connection to the motor controller failed");
     return -1;
   }
   
@@ -164,13 +186,7 @@ int main(int argc, char **argv)
     ROS_INFO("Temperatur: %g", temp);
   }
 
-  PhidgetVoltageRatioInputHandle ch_U;
-  
-  if(connect_voltage_sens(&ch_U)){
-    double U;
-    PhidgetTemperatureSensor_getTemperature(ch_U, &U);
-    ROS_INFO("Voltage: %g", U);
-  }
+
 
   
 
@@ -197,16 +213,18 @@ int main(int argc, char **argv)
    * A count of how many messages we have sent. This is used to create
    * a unique string for each message.
    */
-  int count = 0;
   while (ros::ok())
   {
     /**
      * This is a message object. You stuff it with data, and then publish it.
      */
 
-    std::stringstream ss;
-    ss << std::to_string(cmd_vel.linear.x) << " " << count;
-    msg.data = ss.str();
+
+    double rps_l;
+    double rps_r;
+
+    calculate_v(cmd_vel, &rps_l, &rps_r);
+    ROS_INFO("Wheelspeed right: %g rps; left: %g rps", rps_r, rps_l);
 
 
     PhidgetDCMotor_setTargetVelocity(ch, cmd_vel.linear.x);    
@@ -214,7 +232,7 @@ int main(int argc, char **argv)
     //ROS_INFO("%s", msg.data.c_str());
     double temp;
     PhidgetTemperatureSensor_getTemperature(ch_tmp, &temp);
-    ROS_INFO("Temperatur: %g", temp);
+   // ROS_INFO("Temperatur: %g", temp);
     /**
      * The publish() function is how you send messages. The parameter
      * is the message object. The type of this object must agree with the type
@@ -226,7 +244,6 @@ int main(int argc, char **argv)
     ros::spinOnce();
 
     loop_rate.sleep();
-    ++count;
   }
 
 	PhidgetDCMotor_delete(&ch);
