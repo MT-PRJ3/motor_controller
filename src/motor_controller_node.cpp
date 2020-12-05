@@ -4,12 +4,20 @@
 //#include "phidgets_api/motor.h"
 //#include "phidgets_api/phidget.h"
 #include <stdlib.h>
+#include <math.h>
 #include "phidget22.h"
 
 #include <string.h>
 
 
 #include <sstream>
+
+#define AXLE_WIDTH 0.5      // [m]
+#define TIRE_RADIUS 0.13    // [m]
+#define V_WHEEL_MAX 1.0     // [m/s]
+#define V_LIN_MAX 1.0       // [m/s]
+#define V_ANG_MAX 0.5       // [rad/s]
+#define TIRE_CIRCUMFERENCE TIRE_RADIUS*2.0*M_PI //[m]
 
 /**
  * This tutorial demonstrates simple sending of messages over the ROS system.
@@ -41,25 +49,58 @@ bool connect_controller(PhidgetDCMotorHandle *ch){
   }
 }
 
-bool connect_temp_sens(PhidgetTemperatureSensorHandle* ch){
-	
-  PhidgetReturnCode res;
-  PhidgetTemperatureSensor_create(ch);
+void calculate_v(geometry_msgs::Twist cmd_vel, int* rps_l, int* rps_r){
 
-  ROS_INFO("Connecting to the temperature sensor");
+  //saturate cmd_vel values
 
-  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, PHIDGET_TIMEOUT_DEFAULT);
-	if (res != EPHIDGET_OK){
-    ROS_INFO("Connection to the temp sensor failed; error 0x%x", res);
-		return false;
-  }
-  else{
-    ROS_INFO("Connection to the temp sensor successful");
-    return true;
+  if(abs(cmd_vel.linear.x) > V_LIN_MAX){
+    if(cmd_vel.linear.x > 0){
+      cmd_vel.linear.x = V_LIN_MAX;
+    }
+    else{
+      cmd_vel.linear.x = -V_LIN_MAX;
+    }
+    ROS_INFO("Linear velocity limited to %g m/s", V_LIN_MAX);
   }
 
+  if(abs(cmd_vel.angular.x) > V_ANG_MAX){
+    if(cmd_vel.angular.x > 0){
+      cmd_vel.angular.x = V_ANG_MAX;
+    }
+    else{
+      cmd_vel.angular.x = -V_ANG_MAX;
+    }
+    ROS_INFO("Angular velocity limited to %g rad/s", V_ANG_MAX);
+  }
 
+  // calculate linear velocity
+  int v_lin_l = cmd_vel.linear.x;
+  int v_lin_r = cmd_vel.linear.x;
+
+  // calculate angular velocity
+  int d_v_ang = cmd_vel.angular.z * AXLE_WIDTH; // delta v in [m/s]
+
+  // superposition of v_lin and v_ang
+  int v_l = v_lin_l + d_v_ang/2;
+  int v_r = v_lin_r - d_v_ang/2;
+  // saturate
+  if(abs(v_l) > V_WHEEL_MAX){
+    v_l = v_l * V_WHEEL_MAX / abs(v_l);
+    v_r = v_l - d_v_ang;
+    ROS_INFO("Left wheel at speed limit, linear speed reduced");
+  }
+
+  if(abs(v_r) > V_WHEEL_MAX){
+    v_r = v_r * V_WHEEL_MAX / abs(v_r);
+    v_l = v_r + d_v_ang;
+    ROS_INFO("Right wheel at speed limit, linear speed reduced");
+  }
+
+  // convert to rounds per second
+    rps_l = v_l / TIRE_CIRCUMFERENCE;
+    rps_r = v_R / TIRE_CIRCUMFERENCE;
 }
+
 
 int main(int argc, char **argv)
 {
@@ -122,8 +163,14 @@ int main(int argc, char **argv)
     PhidgetTemperatureSensor_getTemperature(ch_tmp, &temp);
     ROS_INFO("Temperatur: %g", temp);
   }
-  
 
+  PhidgetVoltageRatioInputHandle ch_U;
+  
+  if(connect_voltage_sens(&ch_U)){
+    double U;
+    PhidgetTemperatureSensor_getTemperature(ch_U, &U);
+    ROS_INFO("Voltage: %g", U);
+  }
 
   
 
