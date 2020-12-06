@@ -14,10 +14,10 @@
 
 #define AXLE_WIDTH 0.5      // [m]
 #define TIRE_RADIUS 0.065   // [m]
-#define V_WHEEL_MAX 1.0     // [m/s]
-#define V_LIN_MAX 1.0       // [m/s]
-#define V_ANG_MAX 0.5       // [rad/s]
+#define V_LIN_MAX 1.5       // [m/s]
+#define V_ANG_MAX 2.0       // [rad/s]
 #define TIRE_CIRCUMFERENCE TIRE_RADIUS*2.0*M_PI //[m]
+#define A_Y_MAX 2.5         // [m/s²]
 
 /**
  * This tutorial demonstrates simple sending of messages over the ROS system.
@@ -68,58 +68,113 @@ bool connect_temp_sens(PhidgetTemperatureSensorHandle* ch){
   }
 }
 
-void calculate_v(geometry_msgs::Twist cmd_vel, double* rps_l, double* rps_r){
+double calculate_r(double v_lin, double v_ang){
 
-  //saturate cmd_vel values
-
-  if(abs(cmd_vel.linear.x) > V_LIN_MAX){
-    if(cmd_vel.linear.x > 0){
-      cmd_vel.linear.x = V_LIN_MAX;
-    }
-    else{
-      cmd_vel.linear.x = -V_LIN_MAX;
-    }
-    ROS_INFO("Linear velocity limited to %g m/s", V_LIN_MAX);
-  }
-
-  if(abs(cmd_vel.angular.z) > V_ANG_MAX){
-    if(cmd_vel.angular.z > 0){
-      cmd_vel.angular.z = V_ANG_MAX;
-    }
-    else{
-      cmd_vel.angular.z = -V_ANG_MAX;
-    }
-    ROS_INFO("Angular velocity limited to %g rad/s", V_ANG_MAX);
-  }
-
-  // calculate linear velocity
-  double v_lin_l = cmd_vel.linear.x;
-  double v_lin_r = cmd_vel.linear.x;
-
-  // calculate angular velocity
-  double d_v_ang = cmd_vel.angular.z * AXLE_WIDTH; // delta v in [m/s]
+  // calculate velocity difference left - right
+  double d_v_ang = v_ang * AXLE_WIDTH; // delta v in [m/s]
 
   // superposition of v_lin and v_ang
-  double v_l = v_lin_l + d_v_ang/2;
-  double v_r = v_lin_r - d_v_ang/2;
-  // saturate
-  if(abs(v_l) > V_WHEEL_MAX){
-    v_l = v_l * V_WHEEL_MAX / abs(v_l);
-    v_r = v_l - d_v_ang;
-    ROS_INFO("Left wheel at speed limit, linear speed reduced");
+  double v_l = v_lin + d_v_ang/2;
+  double v_r = v_lin - d_v_ang/2;
+
+  return (AXLE_WIDTH/2) * (v_r + v_l) / (v_r - v_l);
+}
+
+void calculate_v(geometry_msgs::Twist cmd_vel, double* rps_l, double* rps_r){
+
+  double v_lin, v_ang, v_l, v_r;
+  uint8_t state = 0;
+
+  if(cmd_vel.linear.x != 0){
+    state = state + 0x01;
+
+    if(abs(cmd_vel.linear.x) > V_LIN_MAX){      // Limit maximum linear speed
+      if(cmd_vel.linear.x > 0){
+        v_lin = V_LIN_MAX;
+      }
+      else
+      {
+        v_lin = -V_LIN_MAX;
+      }
+      ROS_INFO("Linear speed exceeds limits -> Reduced speed from %g to %g!", cmd_vel.linear.x, v_lin);
+    }
+    else
+    {
+      v_lin = cmd_vel.linear.x;
+    }
   }
 
-  if(abs(v_r) > V_WHEEL_MAX){
-    v_r = v_r * V_WHEEL_MAX / abs(v_r);
-    v_l = v_r + d_v_ang;
-    ROS_INFO("Right wheel at speed limit, linear speed reduced");
-  }
+  if(cmd_vel.angular.z != 0){
+    state = state + 0x02;
 
+    if(abs(cmd_vel.angular.z) > V_ANG_MAX){      // Limit maximum angular speed
+      if(cmd_vel.angular.z > 0){
+        v_ang = V_ANG_MAX;
+      }
+      else{
+        v_ang = -V_ANG_MAX;
+      }
+      ROS_INFO("Angular speed exceeds limits -> Reduced speed from %g to %g!", cmd_vel.angular.z, v_ang);
+    }
+    else
+    {
+      v_ang = cmd_vel.angular.z;
+    }
+  }
+  ROS_INFO("Entering state %d", state);  
+
+  switch(state){
+
+    case 0:   // v_lin and v_ang = 0 -> dont move
+      v_l = 0;
+      v_r = 0;
+    break;
+
+    case 1:   // v_ang = 0 -> only linear motion
+      v_l = v_lin;
+      v_r = v_lin;
+    break;
+
+    case 2:   // v_lin = 0 -> only angular motion
+    {
+      double d_v_ang = v_ang * AXLE_WIDTH; // delta v in [m/s]
+
+      v_l =  d_v_ang/2;
+      v_r = - d_v_ang/2;
+    }
+    break;
+
+    case 3:   // v_lin and v_ang != 0 -> make sure the robot doesnt tip over
+    {
+      double r = calculate_r(v_lin, v_ang);
+
+      if(abs(v_lin*v_lin / r) > A_Y_MAX){ // calculate the lateral acceleration
+        if(v_lin > 0){
+          v_lin = sqrt(abs(r) * A_Y_MAX);    // lateral acceleration to high -> reduce speed
+        }
+        else
+        {
+          v_lin = -sqrt(abs(r) * A_Y_MAX);    // lateral acceleration to high -> reduce speed
+        }
+        ROS_INFO("lateral acceleration exceeds limits -> Reduced speed!");
+      }
+
+      ROS_INFO("Radius: %g, speed: %g", r, v_lin);
+
+      v_l = v_lin * (r - 0.5 * AXLE_WIDTH)/r; // Calculate the wheel speeds (may need to switch l and r)
+      v_r = v_lin * (r + 0.5 * AXLE_WIDTH)/r;
+    }
+    break;
+
+    default:
+      ROS_ERROR("Somehow reached invalid state in the motor controller node");
+    break;
+  }
+  ROS_INFO("v_r: %g; v_l: %g", v_r, v_l);
   // convert to rounds per second
-    *rps_l = v_l / TIRE_CIRCUMFERENCE;
-    *rps_r = v_r / TIRE_CIRCUMFERENCE;
-
-
+  *rps_l = v_l / TIRE_CIRCUMFERENCE;
+  *rps_r = v_r / TIRE_CIRCUMFERENCE;
+  ROS_INFO(" ");
 }
 
 
@@ -224,7 +279,7 @@ int main(int argc, char **argv)
     double rps_r;
 
     calculate_v(cmd_vel, &rps_l, &rps_r);
-    ROS_INFO("Wheelspeed right: %g rps; left: %g rps", rps_r, rps_l);
+    //ROS_INFO("Wheelspeed right: %g rps; left: %g rps", rps_r, rps_l);
 
 
     PhidgetDCMotor_setTargetVelocity(ch, cmd_vel.linear.x);    
