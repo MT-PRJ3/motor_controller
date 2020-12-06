@@ -38,7 +38,7 @@ void set_duty_cycle(PhidgetDCMotorHandle *handle, double duty_cycle);
 
 void calculate_duty_cycle(double *duty_cycle, double setpoint, double actual_value, double battery_voltage);
 
-void get_speed(encoder_t* encoder, double* rps_actual);
+void get_speed(encoder_t* encoder, double* v_actual);
 
 void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg);
 
@@ -48,7 +48,7 @@ bool connect_temp_sens(PhidgetTemperatureSensorHandle *ch);
 
 double calculate_r(double v_lin, double v_ang);
 
-void calculate_v(geometry_msgs::Twist cmd_vel, double *rps_l, double *rps_r);
+void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l, double *v_r);
 
 /**
  * This tutorial demonstrates simple sending of messages over the ROS system.
@@ -125,10 +125,10 @@ int main(int argc, char **argv)
 
   std_msgs::String msg;
 
-  double rps_l_setpoint;
-  double rps_r_setpoint;
-  double rps_l_actual;
-  double rps_r_actual;
+  double v_l_setpoint;
+  double v_r_setpoint;
+  double v_l_actual;
+  double v_r_actual;
   double dc_l;
   double dc_r;
 
@@ -149,15 +149,15 @@ int main(int argc, char **argv)
 
     if (assert_driving_command())
     {
-      calculate_v(cmd_vel, &rps_l_setpoint, &rps_r_setpoint);
+      calculate_v(cmd_vel, &v_l_setpoint, &v_r_setpoint); // calculate the setpoint speeds for both wheels
 
-      get_speed(&encoder_l, &rps_l_actual);
-      get_speed(&encoder_r, &rps_r_actual);
+      get_speed(&encoder_l, &v_l_actual); // caculate the actual speed of the wheels
+      get_speed(&encoder_r, &v_r_actual);
 
-      calculate_duty_cycle(&dc_l, rps_l_setpoint, rps_l_actual, 24);
-      calculate_duty_cycle(&dc_r, rps_r_setpoint, rps_r_actual, 24);
+      calculate_duty_cycle(&dc_l, v_l_setpoint, v_l_actual, 24);  // calculate the duty cycle using a simple P controller
+      calculate_duty_cycle(&dc_r, v_r_setpoint, v_r_actual, 24);  // with a feedforward component
 
-      set_duty_cycle(&mc_handle_l, dc_l);
+      set_duty_cycle(&mc_handle_l, dc_l); // apply the calculated duty cycle values
       set_duty_cycle(&mc_handle_r, dc_r);
     }
 
@@ -199,7 +199,7 @@ void calculate_duty_cycle(double *duty_cycle, double setpoint, double actual_val
 {
   // Feedforward
   //  Calculating the estimated duty cycle needed for the requested engine speed.
-  double dc_ff = setpoint / (battery_voltage * NOMINAL_MOTOR_SPEED / NOMINAL_MOTOR_VOLTAGE);
+  double dc_ff = setpoint / (battery_voltage * NOMINAL_MOTOR_SPEED * TIRE_CIRCUMFERENCE / NOMINAL_MOTOR_VOLTAGE);
 
   // Feedback loop
   //  A basic P controller that corrects the error from the engine load
@@ -220,7 +220,7 @@ void calculate_duty_cycle(double *duty_cycle, double setpoint, double actual_val
   }
 }
 
-void get_speed(encoder_t* encoder, double* rps_actual)
+void get_speed(encoder_t* encoder, double* v_actual)
 {
   int64_t position = 0;
   PhidgetEncoder_getPosition(encoder->handle, &position);
@@ -231,7 +231,7 @@ void get_speed(encoder_t* encoder, double* rps_actual)
 
   double  d_time = diff_time.toSec();
 
-  *rps_actual = (d_pos/d_time)/(ENCODER_RESOLUTION*GEAR_RATIO);
+  *v_actual = ((d_pos/d_time)/(ENCODER_RESOLUTION*GEAR_RATIO))*TIRE_CIRCUMFERENCE;
 
   encoder->pos_old = position;
   encoder->t_old = now;
@@ -299,7 +299,7 @@ double calculate_r(double v_lin, double v_ang)
   return (AXLE_WIDTH / 2) * (v_r + v_l) / (v_r - v_l);
 }
 
-void calculate_v(geometry_msgs::Twist cmd_vel, double *rps_l, double *rps_r)
+void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l_setpoint, double *v_r_setpoint)
 {
 
   double v_lin, v_ang, v_l, v_r;
@@ -399,10 +399,13 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *rps_l, double *rps_r)
     ROS_ERROR("Somehow reached invalid state in the motor controller node");
     break;
   }
-  // convert to rounds per second
-  *rps_l = v_l / TIRE_CIRCUMFERENCE;
-  *rps_r = v_r / TIRE_CIRCUMFERENCE;
 
-  ROS_INFO("rps_l: %g, rps_r: %g", *rps_l, *rps_r);
+  *v_l_setpoint = v_l;
+  *v_r_setpoint = v_r;
+  // convert to rounds per second
+  // *rps_l = v_l / TIRE_CIRCUMFERENCE;
+  // *rps_r = v_r / TIRE_CIRCUMFERENCE;
+
+  ROS_INFO("v_l: %g, v_r: %g", *v_l_setpoint, *v_r_setpoint);
   ROS_INFO(" ");
 }
