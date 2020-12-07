@@ -11,26 +11,42 @@
 
 #include <sstream>
 
-#define AXLE_WIDTH 0.5 // [m]
+#define FREQUENCY 100 //Hz  Execution frequency of the programm
+
+#define VINT_SN 620709
+
+#define AXLE_WIDTH 0.375 // [m]
 #define V_LIN_MAX 1.5  // [m/s]
 #define V_ANG_MAX 2.0  // [rad/s]
 #define A_Y_MAX 2.5    // [m/s²]
 
-#define TIRE_RADIUS 0.065                             // [m]
+#define TIRE_RADIUS 0.08                             // [m]
 #define TIRE_CIRCUMFERENCE (TIRE_RADIUS * 2.0 * M_PI) // [m]
 
 #define NOMINAL_MOTOR_SPEED 3.0333 // [1/s]
 #define NOMINAL_MOTOR_VOLTAGE 24.0 // [V]
-#define GEAR_RATIO 18        // 18:1 [INPUT:OUTPUT]
-#define ENCODER_RESOLUTION 300      //[Counts/Revolution] (on the engine side of the gearbox)
+#define GEAR_RATIO 18              // 18:1 [INPUT:OUTPUT]
+#define ENCODER_RESOLUTION 300     //[Counts/Revolution] (on the engine side of the gearbox)
 
 #define KP 5 // I dont know what im doing, should probably be changed!
+#define MOTOR_ACCELERATION 1.0 // Duty cycles/s [0.1:100]
+#define MOTOR_BRAKING_STRENGTH 1.0 //
 
-typedef struct{
+#define MOTOR_CURRENT_LIMIT 25  // [A]  [2:250]
+#define MOTOR_DATA_INTERVALL  100  //data interval in ms
+
+typedef struct
+{
   ros::Time t_old;
   int64_t pos_old;
   PhidgetEncoderHandle handle;
-}encoder_t;
+} encoder_t;
+
+enum controller_side_t
+{
+  left = 0x00,
+  right = 0x01
+};
 
 bool assert_driving_command();
 
@@ -38,11 +54,11 @@ void set_duty_cycle(PhidgetDCMotorHandle *handle, double duty_cycle);
 
 void calculate_duty_cycle(double *duty_cycle, double setpoint, double actual_value, double battery_voltage);
 
-void get_speed(encoder_t* encoder, double* v_actual);
+void get_speed(encoder_t *encoder, double *v_actual);
 
 void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg);
 
-bool connect_controller(PhidgetDCMotorHandle *ch);
+bool connect_controller(PhidgetDCMotorHandle *ch, controller_side_t side);
 
 bool connect_temp_sens(PhidgetTemperatureSensorHandle *ch);
 
@@ -50,6 +66,9 @@ double calculate_r(double v_lin, double v_ang);
 
 void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l, double *v_r);
 
+void report_device_info(PhidgetHandle handle);
+
+void connect_motor_controllers(PhidgetDCMotorHandle **mc_array);
 /**
  * This tutorial demonstrates simple sending of messages over the ROS system.
  */
@@ -97,22 +116,20 @@ int main(int argc, char **argv)
   ros::Publisher chatter_pub = n.advertise<std_msgs::String>("chatter", 1000);
   ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 1000, cmd_vel_cb);
 
-  ros::Rate loop_rate(10);
+  ros::Rate loop_rate(FREQUENCY);
 
   PhidgetDCMotorHandle ch;
 
-  PhidgetDCMotorHandle mc_handle_r;
-  PhidgetDCMotorHandle mc_handle_l;
+  // Connect the motor controllers
+  PhidgetDCMotorHandle mc_handle_1;
+  PhidgetDCMotorHandle mc_handle_2;
 
-  if (connect_controller(&ch))
-  {
-    PhidgetDCMotor_setFanMode(ch, FAN_MODE_AUTO);
-  }
-  else
-  {
-    ROS_INFO("Connection to the motor controller failed");
-    return -1;
-  }
+  PhidgetDCMotorHandle *mc_handles[2];
+
+  mc_handles[left] = &mc_handle_1;
+  mc_handles[right] = &mc_handle_2;
+
+  connect_motor_controllers(mc_handles);
 
   PhidgetTemperatureSensorHandle ch_tmp;
 
@@ -154,11 +171,11 @@ int main(int argc, char **argv)
       get_speed(&encoder_l, &v_l_actual); // caculate the actual speed of the wheels
       get_speed(&encoder_r, &v_r_actual);
 
-      calculate_duty_cycle(&dc_l, v_l_setpoint, v_l_actual, 24);  // calculate the duty cycle using a simple P controller
-      calculate_duty_cycle(&dc_r, v_r_setpoint, v_r_actual, 24);  // with a feedforward component
+      calculate_duty_cycle(&dc_l, v_l_setpoint, v_l_actual, 24); // calculate the duty cycle using a simple P controller
+      calculate_duty_cycle(&dc_r, v_r_setpoint, v_r_actual, 24); // with a feedforward component
 
-      set_duty_cycle(&mc_handle_l, dc_l); // apply the calculated duty cycle values
-      set_duty_cycle(&mc_handle_r, dc_r);
+      set_duty_cycle(mc_handles[left], dc_l); // apply the calculated duty cycle values
+      set_duty_cycle(mc_handles[right], dc_r);
     }
 
     //PhidgetDCMotor_setTargetVelocity(ch, cmd_vel.linear.x);
@@ -190,6 +207,15 @@ bool assert_driving_command()
   return true;
 }
 
+void connect_motor_controllers(PhidgetDCMotorHandle **mc_array)
+{
+  connect_controller(mc_array[left], left);
+  connect_controller(mc_array[right], right);
+
+  report_device_info((PhidgetHandle)*mc_array[left]);
+  report_device_info((PhidgetHandle)*mc_array[right]);
+}
+
 void set_duty_cycle(PhidgetDCMotorHandle *handle, double duty_cycle)
 {
   PhidgetDCMotor_setTargetVelocity(*handle, duty_cycle);
@@ -204,7 +230,7 @@ void calculate_duty_cycle(double *duty_cycle, double setpoint, double actual_val
   // Feedback loop
   //  A basic P controller that corrects the error from the engine load
   double error = setpoint - actual_value;
-  double dc_fb = KP *error;
+  double dc_fb = KP * error;
 
   // adding feedforward and feedback loop
   *duty_cycle = dc_ff + dc_fb;
@@ -220,7 +246,7 @@ void calculate_duty_cycle(double *duty_cycle, double setpoint, double actual_val
   }
 }
 
-void get_speed(encoder_t* encoder, double* v_actual)
+void get_speed(encoder_t *encoder, double *v_actual)
 {
   int64_t position = 0;
   PhidgetEncoder_getPosition(encoder->handle, &position);
@@ -229,9 +255,9 @@ void get_speed(encoder_t* encoder, double* v_actual)
   int64_t d_pos = position - encoder->pos_old;
   ros::Duration diff_time = now - encoder->t_old;
 
-  double  d_time = diff_time.toSec();
+  double d_time = diff_time.toSec();
 
-  *v_actual = ((d_pos/d_time)/(ENCODER_RESOLUTION*GEAR_RATIO))*TIRE_CIRCUMFERENCE;
+  *v_actual = ((d_pos / d_time) / (ENCODER_RESOLUTION * GEAR_RATIO)) * TIRE_CIRCUMFERENCE;
 
   encoder->pos_old = position;
   encoder->t_old = now;
@@ -242,12 +268,14 @@ void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg)
   cmd_vel = *msg;
 }
 
-bool connect_controller(PhidgetDCMotorHandle *ch)
+bool connect_controller(PhidgetDCMotorHandle *ch, controller_side_t side)
 {
-
   PhidgetReturnCode res;
 
   PhidgetDCMotor_create(ch);
+
+  Phidget_setDeviceSerialNumber((PhidgetHandle)*ch, VINT_SN);
+  Phidget_setHubPort((PhidgetHandle)*ch, side);
 
   ROS_INFO("Connecting to device...");
 
@@ -259,9 +287,27 @@ bool connect_controller(PhidgetDCMotorHandle *ch)
   }
   else
   {
-    ROS_INFO("Connectd");
+    ROS_INFO("Connected");
+    PhidgetDCMotor_setTargetBrakingStrength(*ch, MOTOR_BRAKING_STRENGTH);
+    PhidgetDCMotor_setAcceleration(*ch, MOTOR_ACCELERATION);
+    PhidgetDCMotor_setDataInterval(*ch, MOTOR_DATA_INTERVALL);
+    PhidgetDCMotor_setCurrentLimit(*ch, MOTOR_CURRENT_LIMIT);
     return true;
   }
+}
+
+void report_device_info(PhidgetHandle handle)
+{ 
+  const char *name;
+  int32_t deviceID;
+  int32_t SN;
+  int32_t port;
+
+  Phidget_getDeviceName(handle, &name);
+  Phidget_getDeviceSerialNumber(handle, &SN);
+  Phidget_getHubPort(handle, &port);
+
+  ROS_INFO("device %s connected to port %d (VINT SN: %d) ", name, port, SN);
 }
 
 bool connect_temp_sens(PhidgetTemperatureSensorHandle *ch)
