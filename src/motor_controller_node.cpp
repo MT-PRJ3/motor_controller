@@ -1,6 +1,8 @@
 #include "ros/ros.h"
 #include "std_msgs/String.h"
+#include "std_msgs/Float64.h"
 #include "geometry_msgs/Twist.h"
+#include "sensor_msgs/Temperature.h"
 //#include "phidgets_api/motor.h"
 //#include "phidgets_api/phidget.h"
 #include <stdlib.h>
@@ -26,16 +28,15 @@
 #define NOMINAL_MOTOR_SPEED 3.0333 // [1/s]
 #define NOMINAL_MOTOR_VOLTAGE 24.0 // [V]
 #define GEAR_RATIO 18              // 18:1 [INPUT:OUTPUT]
-#define ENCODER_RESOLUTION 300     //[Counts/Revolution] (on the engine side of the gearbox) \
-                                   // I dont know what im doing, should probably be changed!
+#define ENCODER_RESOLUTION 300     //[Counts/Revolution] (on the engine side of the gearbox)
 #define MOTOR_ACCELERATION 1.0     // Duty cycles/s [0.1:100]
 #define MOTOR_BRAKING_STRENGTH 1.0 // Braking strength if the set velocity is 0 [0:1.0]
 
-#define MOTOR_CURRENT_LIMIT 25                    // [A]  [2:250]
+#define MOTOR_CURRENT_LIMIT 25                    // [A]  [2:25]
 #define MOTOR_DATA_INTERVALL (1000 / FREQUENCY)   //data interval in ms [100:60000]
 #define ENCODER_DATA_INTERVALL (1000 / FREQUENCY) //data interval in ms [100:60000]
 
-#define K_P 1 // P component of the PID
+#define K_P 1 // P component of the PID     I dont know what im doing, should probably be changed!
 #define K_I 0 // I component of the PID
 #define K_D 0 // D component of the PID
 
@@ -59,6 +60,7 @@ enum controller_side_t
   right = 0x01
 };
 
+
 bool assert_driving_command();
 
 void set_duty_cycle(PhidgetDCMotorHandle *handle, double duty_cycle);
@@ -73,16 +75,28 @@ bool connect_controller(PhidgetDCMotorHandle *ch, controller_side_t side);
 
 bool connect_encoder(PhidgetEncoderHandle *ch, controller_side_t side);
 
-bool connect_temp_sens(PhidgetTemperatureSensorHandle *ch);
+bool connect_temp_sens(PhidgetTemperatureSensorHandle *ch, controller_side_t side);
+
+bool connect_current_sens(PhidgetCurrentInputHandle *ch, controller_side_t side);
 
 double calculate_r(double v_lin, double v_ang);
 
 void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l, double *v_r);
 
 void report_device_info(PhidgetHandle handle);
+
+void publish_sensor_values(PhidgetCurrentInputHandle* ch_current,PhidgetTemperatureSensorHandle* ch_temp, double v_l_actual, double v_r_actual);
 /**
  * This tutorial demonstrates simple sending of messages over the ROS system.
  */
+
+ros::NodeHandle n;
+
+ros::Publisher temp_l = n.advertise<sensor_msgs::Temperature>("temp_l", 1000);
+ros::Publisher temp_r = n.advertise<sensor_msgs::Temperature>("temp_r", 1000);
+ros::Publisher current_l = n.advertise<std_msgs::Float64>("current_l", 1000);
+ros::Publisher current_r = n.advertise<std_msgs::Float64>("current_r", 1000);
+ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 1000, cmd_vel_cb);
 
 geometry_msgs::Twist cmd_vel;
 
@@ -105,7 +119,6 @@ int main(int argc, char **argv)
    * The first NodeHandle constructed will fully initialize this node, and the last
    * NodeHandle destructed will close down the node.
    */
-  ros::NodeHandle n;
 
   /**
    * The advertise() function is how you tell ROS that you want to
@@ -124,8 +137,6 @@ int main(int argc, char **argv)
    * than we can send them, the number here specifies how many messages to
    * buffer up before throwing some away.
    */
-  ros::Publisher chatter_pub = n.advertise<std_msgs::String>("chatter", 1000);
-  ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 1000, cmd_vel_cb);
 
   ros::Rate loop_rate(FREQUENCY);
 
@@ -164,14 +175,14 @@ int main(int argc, char **argv)
   encoder[right]->t_old = ros::Time::now();
   connect_encoder(&(encoder[right]->handle), right);
 
-  PhidgetTemperatureSensorHandle ch_tmp;
+  PhidgetTemperatureSensorHandle ch_tmp[2];
+  connect_temp_sens(&ch_tmp[left], left);
+  connect_temp_sens(&ch_tmp[right], right);
 
-  if (connect_temp_sens(&ch_tmp))
-  {
-    double temp;
-    PhidgetTemperatureSensor_getTemperature(ch_tmp, &temp);
-    ROS_INFO("Temperatur: %g", temp);
-  }
+  PhidgetCurrentInputHandle ch_current[2];
+  connect_current_sens(&ch_current[left], left);
+  connect_current_sens(&ch_current[right], right);
+
 
   std_msgs::String msg;
 
@@ -210,13 +221,13 @@ int main(int argc, char **argv)
 
       set_duty_cycle(mc_handles[left], dc_l); // apply the calculated duty cycle values
       set_duty_cycle(mc_handles[right], dc_r);
+
+      publish_sensor_values(ch_current, ch_tmp, v_l_actual, v_r_actual);
     }
 
     //PhidgetDCMotor_setTargetVelocity(ch, cmd_vel.linear.x);
 
     //ROS_INFO("%s", msg.data.c_str());
-    double temp;
-    PhidgetTemperatureSensor_getTemperature(ch_tmp, &temp);
     // ROS_INFO("Temperatur: %g", temp);
     /**
      * The publish() function is how you send messages. The parameter
@@ -224,14 +235,11 @@ int main(int argc, char **argv)
      * given as a template parameter to the advertise<>() call, as was done
      * in the constructor above.
      */
-    chatter_pub.publish(msg);
 
     ros::spinOnce();
 
     loop_rate.sleep();
   }
-
-  PhidgetDCMotor_delete(&ch);
 
   return 0;
 }
@@ -312,7 +320,7 @@ bool connect_controller(PhidgetDCMotorHandle *ch, controller_side_t side)
 
   ROS_INFO("Connecting to device...");
 
-  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, 1000);
+  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, PHIDGET_TIMEOUT_DEFAULT);
   if (res != EPHIDGET_OK)
   {
     ROS_INFO("Connection Failed; code: 0x%x", res); // Exit in error
@@ -321,6 +329,7 @@ bool connect_controller(PhidgetDCMotorHandle *ch, controller_side_t side)
   else
   {
     ROS_INFO("Connected");
+    PhidgetDCMotor_setFanMode(*ch, FAN_MODE_AUTO);
     PhidgetDCMotor_setTargetBrakingStrength(*ch, MOTOR_BRAKING_STRENGTH);
     PhidgetDCMotor_setAcceleration(*ch, MOTOR_ACCELERATION);
     PhidgetDCMotor_setDataInterval(*ch, MOTOR_DATA_INTERVALL);
@@ -339,7 +348,7 @@ bool connect_encoder(PhidgetEncoderHandle *ch, controller_side_t side)
 
   ROS_INFO("Connecting to encoder...");
 
-  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, 1000);
+  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, PHIDGET_TIMEOUT_DEFAULT);
   if (res != EPHIDGET_OK)
   {
     ROS_INFO("Connection Failed; code: 0x%x", res); // Exit in error
@@ -367,14 +376,15 @@ void report_device_info(PhidgetHandle handle)
   ROS_INFO("device %s connected to port %d (VINT SN: %d) ", name, port, SN);
 }
 
-bool connect_temp_sens(PhidgetTemperatureSensorHandle *ch)
+bool connect_temp_sens(PhidgetTemperatureSensorHandle *ch, controller_side_t side)
 {
-
   PhidgetReturnCode res;
-
   PhidgetTemperatureSensor_create(ch);
 
-  ROS_INFO("Connecting to the temperature sensor");
+  Phidget_setDeviceSerialNumber((PhidgetHandle)*ch, VINT_SN);
+  Phidget_setHubPort((PhidgetHandle)*ch, side);
+
+  ROS_INFO("Connecting to temperature sensor...");
 
   res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, PHIDGET_TIMEOUT_DEFAULT);
   if (res != EPHIDGET_OK)
@@ -384,7 +394,32 @@ bool connect_temp_sens(PhidgetTemperatureSensorHandle *ch)
   }
   else
   {
-    ROS_INFO("Connection to the temp sensor successful");
+    ROS_INFO("Connected");
+    PhidgetTemperatureSensor_setDataInterval(*ch, 500);
+    return true;
+  }
+}
+
+bool connect_current_sens(PhidgetCurrentInputHandle *ch, controller_side_t side)
+{
+  PhidgetReturnCode res;
+  PhidgetCurrentInput_create(ch);
+
+  Phidget_setDeviceSerialNumber((PhidgetHandle)*ch, VINT_SN);
+  Phidget_setHubPort((PhidgetHandle)*ch, side);
+
+  ROS_INFO("Connecting to current sensor...");
+
+  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, PHIDGET_TIMEOUT_DEFAULT);
+  if (res != EPHIDGET_OK)
+  {
+    ROS_INFO("Connection to the current sensor failed; error 0x%x", res);
+    return false;
+  }
+  else
+  {
+    ROS_INFO("Connected");
+    PhidgetCurrentInput_setDataInterval(*ch, MOTOR_DATA_INTERVALL);
     return true;
   }
 }
@@ -510,4 +545,21 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l_setpoint, double *v_r
 
   ROS_INFO("v_l: %g, v_r: %g", *v_l_setpoint, *v_r_setpoint);
   ROS_INFO(" ");
+}
+
+void publish_sensor_values(PhidgetCurrentInputHandle* ch_current,PhidgetTemperatureSensorHandle* ch_temp, double v_l_actual, double v_r_actual){
+  std_msgs::Float64 current;
+  PhidgetCurrentInput_getCurrent(ch_current[left], &current.data);
+  current_l.publish(current);
+
+  PhidgetCurrentInput_getCurrent(ch_current[right], &current.data);
+  current_r.publish(current);
+
+  sensor_msgs::Temperature temp;
+
+  PhidgetTemperatureSensor_getTemperature(ch_temp[left], &temp.temperature);
+  temp_l.publish(temp);
+
+  PhidgetTemperatureSensor_getTemperature(ch_temp[right], &temp.temperature);
+  temp_r.publish(temp);
 }
