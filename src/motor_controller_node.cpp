@@ -26,9 +26,8 @@
 #define NOMINAL_MOTOR_SPEED 3.0333 // [1/s]
 #define NOMINAL_MOTOR_VOLTAGE 24.0 // [V]
 #define GEAR_RATIO 18              // 18:1 [INPUT:OUTPUT]
-#define ENCODER_RESOLUTION 300     //[Counts/Revolution] (on the engine side of the gearbox)
-
-#define KP 5                       // I dont know what im doing, should probably be changed!
+#define ENCODER_RESOLUTION 300     //[Counts/Revolution] (on the engine side of the gearbox) \
+                                   // I dont know what im doing, should probably be changed!
 #define MOTOR_ACCELERATION 1.0     // Duty cycles/s [0.1:100]
 #define MOTOR_BRAKING_STRENGTH 1.0 // Braking strength if the set velocity is 0 [0:1.0]
 
@@ -36,12 +35,23 @@
 #define MOTOR_DATA_INTERVALL (1000 / FREQUENCY)   //data interval in ms [100:60000]
 #define ENCODER_DATA_INTERVALL (1000 / FREQUENCY) //data interval in ms [100:60000]
 
+#define K_P 1 // P component of the PID
+#define K_I 0 // I component of the PID
+#define K_D 0 // D component of the PID
+
 typedef struct
 {
   ros::Time t_old;
   int64_t pos_old;
   PhidgetEncoderHandle handle;
 } encoder_t;
+
+typedef struct
+{
+  double dt;
+  double integral;
+  double last_error;
+} mc_pid_t;
 
 enum controller_side_t
 {
@@ -53,7 +63,7 @@ bool assert_driving_command();
 
 void set_duty_cycle(PhidgetDCMotorHandle *handle, double duty_cycle);
 
-void calculate_duty_cycle(double *duty_cycle, double setpoint, double actual_value, double battery_voltage);
+void calculate_duty_cycle(mc_pid_t *pid, double *duty_cycle, double setpoint, double actual_value, double battery_voltage);
 
 void get_speed(encoder_t *encoder, double *v_actual);
 
@@ -172,6 +182,16 @@ int main(int argc, char **argv)
   double dc_l;
   double dc_r;
 
+  mc_pid_t pid[2];
+
+  pid[left].dt = 1 / FREQUENCY;
+  pid[left].integral = 0;
+  pid[left].last_error = 0;
+
+  pid[right].dt = 1 / FREQUENCY;
+  pid[right].integral = 0;
+  pid[right].last_error = 0;
+
   while (ros::ok())
   {
     /**
@@ -185,8 +205,8 @@ int main(int argc, char **argv)
       get_speed(encoder[left], &v_l_actual); // caculate the actual speed of the wheels
       get_speed(encoder[right], &v_r_actual);
 
-      calculate_duty_cycle(&dc_l, v_l_setpoint, v_l_actual, 24); // calculate the duty cycle using a simple P controller
-      calculate_duty_cycle(&dc_r, v_r_setpoint, v_r_actual, 24); // with a feedforward component
+      calculate_duty_cycle(&pid[left], &dc_l, v_l_setpoint, v_l_actual, 24);  // calculate the duty cycle using a simple P controller
+      calculate_duty_cycle(&pid[right], &dc_r, v_r_setpoint, v_r_actual, 24); // with a feedforward component
 
       set_duty_cycle(mc_handles[left], dc_l); // apply the calculated duty cycle values
       set_duty_cycle(mc_handles[right], dc_r);
@@ -226,19 +246,27 @@ void set_duty_cycle(PhidgetDCMotorHandle *handle, double duty_cycle)
   PhidgetDCMotor_setTargetVelocity(*handle, duty_cycle);
 }
 
-void calculate_duty_cycle(double *duty_cycle, double setpoint, double actual_value, double battery_voltage)
+void calculate_duty_cycle(mc_pid_t *pid, double *duty_cycle, double setpoint, double actual_value, double battery_voltage)
 {
   // Feedforward
   //  Calculating the estimated duty cycle needed for the requested engine speed.
   double dc_ff = setpoint / (battery_voltage * NOMINAL_MOTOR_SPEED * TIRE_CIRCUMFERENCE / NOMINAL_MOTOR_VOLTAGE);
 
   // Feedback loop
-  //  A basic P controller that corrects the error from the engine load
+  //  A basic PID controller that corrects the error from the engine load
   double error = setpoint - actual_value;
-  double dc_fb = KP * error;
+
+  double dc_p = K_P * error; // P compontent
+
+  pid->integral = pid->integral + (error * pid->dt);
+  double dc_i = K_I * pid->integral; // I component
+
+  double dc_d = K_D * (error - pid->last_error) / pid->dt; // D component
 
   // adding feedforward and feedback loop
-  *duty_cycle = dc_ff + dc_fb;
+  *duty_cycle = dc_ff + (dc_p + dc_i + dc_d);
+
+  pid->last_error = error;
 
   // Saturate output
   if (*duty_cycle > 1)
