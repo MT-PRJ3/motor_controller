@@ -28,17 +28,18 @@
 #define NOMINAL_MOTOR_SPEED 3.0333 // [1/s]
 #define NOMINAL_MOTOR_VOLTAGE 24.0 // [V]
 #define GEAR_RATIO 18              // 18:1 [INPUT:OUTPUT]
-#define ENCODER_RESOLUTION 300     //[Counts/Revolution] (on the engine side of the gearbox)
+#define ENCODER_RESOLUTION 1200    //[Counts/Revolution] (on the engine side of the gearbox)
 #define MOTOR_ACCELERATION 1.0     // Duty cycles/s [0.1:100]
 #define MOTOR_BRAKING_STRENGTH 1.0 // Braking strength if the set velocity is 0 [0:1.0]
 
-#define MOTOR_CURRENT_LIMIT 25                    // [A]  [2:25]
+#define MOTOR_CURRENT_LIMIT 25     // [A]  [2:25]
 #define MOTOR_DATA_INTERVALL 100   //data interval in ms [100:60000]
 #define ENCODER_DATA_INTERVALL 100 //data interval in ms [100:60000]
 
-#define K_P 1 // P component of the PID     I dont know what im doing, should probably be changed!
-#define K_I 0 // I component of the PID
-#define K_D 0 // D component of the PID
+#define PID_I_MAX 1.5
+#define K_P 0.5 // P component of the PID     I dont know what im doing, should probably be changed!
+#define K_I 1  // I component of the PID
+#define K_D 0  // D component of the PID
 
 typedef struct
 {
@@ -60,14 +61,24 @@ enum controller_side_t
   right = 0x01
 };
 
-typedef struct{
+typedef struct
+{
   ros::Publisher temp_l;
   ros::Publisher temp_r;
   ros::Publisher current_l;
   ros::Publisher current_r;
   ros::Publisher speed_l;
   ros::Publisher speed_r;
-}ros_publisher_t;
+} ros_publisher_t;
+
+double v_l_actual;
+double v_r_actual;
+
+ros_publisher_t pub;
+
+void CCONV positionChangeHandler_left(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered);
+
+void CCONV positionChangeHandler_right(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered);
 
 
 bool assert_driving_command();
@@ -94,7 +105,7 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l, double *v_r);
 
 void report_device_info(PhidgetHandle handle);
 
-void publish_sensor_values(ros_publisher_t* pub, PhidgetCurrentInputHandle* ch_current,PhidgetTemperatureSensorHandle* ch_temp, double v_l_actual, double v_r_actual);
+void publish_sensor_values(ros_publisher_t *pub, PhidgetCurrentInputHandle *ch_current, PhidgetTemperatureSensorHandle *ch_temp, double v_l_actual, double v_r_actual);
 /**
  * This tutorial demonstrates simple sending of messages over the ROS system.
  */
@@ -114,8 +125,6 @@ int main(int argc, char **argv)
    * part of the ROS system.
    */
   ros::init(argc, argv, "motor_controller_node");
-
-  ros_publisher_t pub;
 
   ros::NodeHandle n;
 
@@ -184,9 +193,13 @@ int main(int argc, char **argv)
   encoder[left]->t_old = ros::Time::now();
   connect_encoder(&(encoder[left]->handle), left);
 
+  PhidgetEncoder_setOnPositionChangeHandler(encoder[left]->handle, positionChangeHandler_left, NULL);
+
   encoder[right]->pos_old = 0;
   encoder[right]->t_old = ros::Time::now();
   connect_encoder(&(encoder[right]->handle), right);
+
+  PhidgetEncoder_setOnPositionChangeHandler(encoder[right]->handle, positionChangeHandler_right, NULL);
 
   PhidgetTemperatureSensorHandle ch_tmp[2];
   connect_temp_sens(&ch_tmp[left], left);
@@ -196,15 +209,15 @@ int main(int argc, char **argv)
   connect_current_sens(&ch_current[left], left);
   connect_current_sens(&ch_current[right], right);
 
-
   std_msgs::String msg;
 
   double v_l_setpoint;
   double v_r_setpoint;
-  double v_l_actual;
-  double v_r_actual;
   double dc_l;
   double dc_r;
+
+  v_l_actual = 0;
+  v_r_actual = 0;
 
   mc_pid_t pid[2];
 
@@ -226,8 +239,8 @@ int main(int argc, char **argv)
     {
       calculate_v(cmd_vel, &v_l_setpoint, &v_r_setpoint); // calculate the setpoint speeds for both wheels
 
-      get_speed(encoder[left], &v_l_actual); // caculate the actual speed of the wheels
-      get_speed(encoder[right], &v_r_actual);
+      // get_speed(encoder[left], &v_l_actual); // caculate the actual speed of the wheels
+      // get_speed(encoder[right], &v_r_actual);
 
       calculate_duty_cycle(&pid[left], &dc_l, v_l_setpoint, v_l_actual, 24);  // calculate the duty cycle using a simple P controller
       calculate_duty_cycle(&pid[right], &dc_r, v_r_setpoint, v_r_actual, 24); // with a feedforward component
@@ -278,17 +291,25 @@ void calculate_duty_cycle(mc_pid_t *pid, double *duty_cycle, double setpoint, do
   // Feedback loop
   //  A basic PID controller that corrects the error from the engine load
   double error = setpoint - actual_value;
-  
+
   double dc_p = K_P * error; // P compontent
 
   pid->integral = pid->integral + (error * pid->dt);
   double dc_i = K_I * pid->integral; // I component
 
+  if(pid->integral > PID_I_MAX){
+    pid->integral = PID_I_MAX;
+  }
+
+  if(pid->integral < -PID_I_MAX){
+    pid->integral = -PID_I_MAX;
+  }
+
   double dc_d = K_D * (error - pid->last_error) / pid->dt; // D component
 
   //ROS_INFO("feedforward: %g, dc_P: %g, dc_I: %g, dc_D: %g", dc_ff, dc_p, dc_i, dc_d);
   // adding feedforward and feedback loop
-  *duty_cycle = dc_ff + dc_p;
+  *duty_cycle = dc_ff + dc_p + dc_i;
   //ROS_INFO("duty_cycle: %g", *duty_cycle);
 
   pid->last_error = error;
@@ -564,7 +585,8 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l_setpoint, double *v_r
   ROS_INFO(" ");
 }
 
-void publish_sensor_values(ros_publisher_t* pub, PhidgetCurrentInputHandle* ch_current,PhidgetTemperatureSensorHandle* ch_temp, double v_l_actual, double v_r_actual){
+void publish_sensor_values(ros_publisher_t *pub, PhidgetCurrentInputHandle *ch_current, PhidgetTemperatureSensorHandle *ch_temp, double v_l_actual, double v_r_actual)
+{
   std_msgs::Float64 current;
   PhidgetCurrentInput_getCurrent(ch_current[left], &current.data);
   pub->current_l.publish(current);
@@ -580,11 +602,22 @@ void publish_sensor_values(ros_publisher_t* pub, PhidgetCurrentInputHandle* ch_c
   PhidgetTemperatureSensor_getTemperature(ch_temp[right], &temp.temperature);
   pub->temp_r.publish(temp);
 
+
+}
+
+void CCONV positionChangeHandler_left(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered)
+{
+  v_l_actual = (((double)positionChange / timeChange) / (ENCODER_RESOLUTION * GEAR_RATIO)) * TIRE_CIRCUMFERENCE * 1000;
   std_msgs::Float64 speed;
 
   speed.data = v_l_actual;
-  pub->speed_l.publish(speed);
-
-  speed.data = v_l_actual;
-  pub->speed_r.publish(speed);
+  pub.speed_l.publish(speed);
 }
+
+void CCONV positionChangeHandler_right(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered)
+{
+  v_r_actual = (((double)positionChange / timeChange) / (ENCODER_RESOLUTION * GEAR_RATIO)) * TIRE_CIRCUMFERENCE * 1000;
+  std_msgs::Float64 speed;
+
+  speed.data = v_r_actual;
+  pub.speed_r.publish(speed);}
