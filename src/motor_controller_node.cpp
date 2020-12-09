@@ -13,7 +13,7 @@
 
 #include <sstream>
 
-#define FREQUENCY 10 //Hz  Execution frequency of the programm
+#define FREQUENCY 100 //Hz  Execution frequency of the programm
 
 #define VINT_SN 620709
 
@@ -33,8 +33,8 @@
 #define MOTOR_BRAKING_STRENGTH 1.0 // Braking strength if the set velocity is 0 [0:1.0]
 
 #define MOTOR_CURRENT_LIMIT 25                    // [A]  [2:25]
-#define MOTOR_DATA_INTERVALL (1000 / FREQUENCY)   //data interval in ms [100:60000]
-#define ENCODER_DATA_INTERVALL (1000 / FREQUENCY) //data interval in ms [100:60000]
+#define MOTOR_DATA_INTERVALL 100   //data interval in ms [100:60000]
+#define ENCODER_DATA_INTERVALL 100 //data interval in ms [100:60000]
 
 #define K_P 1 // P component of the PID     I dont know what im doing, should probably be changed!
 #define K_I 0 // I component of the PID
@@ -59,6 +59,15 @@ enum controller_side_t
   left = 0x00,
   right = 0x01
 };
+
+typedef struct{
+  ros::Publisher temp_l;
+  ros::Publisher temp_r;
+  ros::Publisher current_l;
+  ros::Publisher current_r;
+  ros::Publisher speed_l;
+  ros::Publisher speed_r;
+}ros_publisher_t;
 
 
 bool assert_driving_command();
@@ -85,18 +94,10 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l, double *v_r);
 
 void report_device_info(PhidgetHandle handle);
 
-void publish_sensor_values(PhidgetCurrentInputHandle* ch_current,PhidgetTemperatureSensorHandle* ch_temp, double v_l_actual, double v_r_actual);
+void publish_sensor_values(ros_publisher_t* pub, PhidgetCurrentInputHandle* ch_current,PhidgetTemperatureSensorHandle* ch_temp, double v_l_actual, double v_r_actual);
 /**
  * This tutorial demonstrates simple sending of messages over the ROS system.
  */
-
-ros::NodeHandle n;
-
-ros::Publisher temp_l = n.advertise<sensor_msgs::Temperature>("temp_l", 1000);
-ros::Publisher temp_r = n.advertise<sensor_msgs::Temperature>("temp_r", 1000);
-ros::Publisher current_l = n.advertise<std_msgs::Float64>("current_l", 1000);
-ros::Publisher current_r = n.advertise<std_msgs::Float64>("current_r", 1000);
-ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 1000, cmd_vel_cb);
 
 geometry_msgs::Twist cmd_vel;
 
@@ -113,6 +114,18 @@ int main(int argc, char **argv)
    * part of the ROS system.
    */
   ros::init(argc, argv, "motor_controller_node");
+
+  ros_publisher_t pub;
+
+  ros::NodeHandle n;
+
+  pub.temp_l = n.advertise<sensor_msgs::Temperature>("temp_l", 1000);
+  pub.temp_r = n.advertise<sensor_msgs::Temperature>("temp_r", 1000);
+  pub.current_l = n.advertise<std_msgs::Float64>("current_l", 1000);
+  pub.current_r = n.advertise<std_msgs::Float64>("current_r", 1000);
+  pub.speed_l = n.advertise<std_msgs::Float64>("speed_l", 1000);
+  pub.speed_r = n.advertise<std_msgs::Float64>("speed_r", 1000);
+  ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 1000, cmd_vel_cb);
 
   /**
    * NodeHandle is the main access point to communications with the ROS system.
@@ -222,7 +235,7 @@ int main(int argc, char **argv)
       set_duty_cycle(mc_handles[left], dc_l); // apply the calculated duty cycle values
       set_duty_cycle(mc_handles[right], dc_r);
 
-      publish_sensor_values(ch_current, ch_tmp, v_l_actual, v_r_actual);
+      publish_sensor_values(&pub, ch_current, ch_tmp, v_l_actual, v_r_actual);
     }
 
     //PhidgetDCMotor_setTargetVelocity(ch, cmd_vel.linear.x);
@@ -251,7 +264,9 @@ bool assert_driving_command()
 
 void set_duty_cycle(PhidgetDCMotorHandle *handle, double duty_cycle)
 {
-  PhidgetDCMotor_setTargetVelocity(*handle, duty_cycle);
+  ROS_INFO("duty cycle: %g", duty_cycle);
+  PhidgetReturnCode res;
+  res = PhidgetDCMotor_setTargetVelocity(*handle, duty_cycle);
 }
 
 void calculate_duty_cycle(mc_pid_t *pid, double *duty_cycle, double setpoint, double actual_value, double battery_voltage)
@@ -263,7 +278,7 @@ void calculate_duty_cycle(mc_pid_t *pid, double *duty_cycle, double setpoint, do
   // Feedback loop
   //  A basic PID controller that corrects the error from the engine load
   double error = setpoint - actual_value;
-
+  
   double dc_p = K_P * error; // P compontent
 
   pid->integral = pid->integral + (error * pid->dt);
@@ -271,8 +286,10 @@ void calculate_duty_cycle(mc_pid_t *pid, double *duty_cycle, double setpoint, do
 
   double dc_d = K_D * (error - pid->last_error) / pid->dt; // D component
 
+  //ROS_INFO("feedforward: %g, dc_P: %g, dc_I: %g, dc_D: %g", dc_ff, dc_p, dc_i, dc_d);
   // adding feedforward and feedback loop
-  *duty_cycle = dc_ff + (dc_p + dc_i + dc_d);
+  *duty_cycle = dc_ff + dc_p;
+  //ROS_INFO("duty_cycle: %g", *duty_cycle);
 
   pid->last_error = error;
 
@@ -547,19 +564,27 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l_setpoint, double *v_r
   ROS_INFO(" ");
 }
 
-void publish_sensor_values(PhidgetCurrentInputHandle* ch_current,PhidgetTemperatureSensorHandle* ch_temp, double v_l_actual, double v_r_actual){
+void publish_sensor_values(ros_publisher_t* pub, PhidgetCurrentInputHandle* ch_current,PhidgetTemperatureSensorHandle* ch_temp, double v_l_actual, double v_r_actual){
   std_msgs::Float64 current;
   PhidgetCurrentInput_getCurrent(ch_current[left], &current.data);
-  current_l.publish(current);
+  pub->current_l.publish(current);
 
   PhidgetCurrentInput_getCurrent(ch_current[right], &current.data);
-  current_r.publish(current);
+  pub->current_r.publish(current);
 
   sensor_msgs::Temperature temp;
 
   PhidgetTemperatureSensor_getTemperature(ch_temp[left], &temp.temperature);
-  temp_l.publish(temp);
+  pub->temp_l.publish(temp);
 
   PhidgetTemperatureSensor_getTemperature(ch_temp[right], &temp.temperature);
-  temp_r.publish(temp);
+  pub->temp_r.publish(temp);
+
+  std_msgs::Float64 speed;
+
+  speed.data = v_l_actual;
+  pub->speed_l.publish(speed);
+
+  speed.data = v_l_actual;
+  pub->speed_r.publish(speed);
 }
