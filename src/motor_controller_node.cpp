@@ -511,36 +511,7 @@ bool connect_encoder(PhidgetEncoderHandle *ch, controller_side_t side)
   }
 }
 
-bool connect_position_controller(PhidgetMotorPositionControllerHandle *ch, controller_side_t side)
-{
-  PhidgetReturnCode res;
-  PhidgetMotorPositionController_create(ch);
 
-  Phidget_setDeviceSerialNumber((PhidgetHandle)*ch, VINT_SN);
-  Phidget_setHubPort((PhidgetHandle)*ch, side);
-
-  ROS_INFO("Connecting to position controller...");
-
-  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, PHIDGET_TIMEOUT_DEFAULT);
-  if (res != EPHIDGET_OK)
-  {
-    ROS_INFO("Connection Failed; code: 0x%x", res); // Exit in error
-    return false;
-  }
-  else
-  {
-    ROS_INFO("Connected");
-    PhidgetMotorPositionController_setDataInterval(*ch, ENCODER_DATA_INTERVALL);
-    PhidgetMotorPositionController_setAcceleration(*ch, POSITION_CONTROLLER_ACCELERATION);
-    PhidgetMotorPositionController_setCurrentLimit(*ch, MOTOR_CURRENT_LIMIT);
-    PhidgetMotorPositionController_setFanMode(*ch, FAN_MODE_AUTO);
-
-    PhidgetMotorPositionController_setKd(*ch, K_D);
-    PhidgetMotorPositionController_setKi(*ch, K_I);
-    PhidgetMotorPositionController_setKp(*ch, K_P);
-    return true;
-  }
-}
 
 void report_device_info(PhidgetHandle handle)
 {
@@ -556,29 +527,7 @@ void report_device_info(PhidgetHandle handle)
   ROS_INFO("device %s connected to port %d (VINT SN: %d) ", name, port, SN);
 }
 
-bool connect_temp_sens(PhidgetTemperatureSensorHandle *ch, controller_side_t side)
-{
-  PhidgetReturnCode res;
-  PhidgetTemperatureSensor_create(ch);
 
-  Phidget_setDeviceSerialNumber((PhidgetHandle)*ch, VINT_SN);
-  Phidget_setHubPort((PhidgetHandle)*ch, side);
-
-  ROS_INFO("Connecting to temperature sensor...");
-
-  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, PHIDGET_TIMEOUT_DEFAULT);
-  if (res != EPHIDGET_OK)
-  {
-    ROS_INFO("Connection to the temp sensor failed; error 0x%x", res);
-    return false;
-  }
-  else
-  {
-    ROS_INFO("Connected");
-    PhidgetTemperatureSensor_setDataInterval(*ch, 500);
-    return true;
-  }
-}
 
 bool connect_current_sens(PhidgetCurrentInputHandle *ch, controller_side_t side)
 {
@@ -606,7 +555,6 @@ bool connect_current_sens(PhidgetCurrentInputHandle *ch, controller_side_t side)
 
 double calculate_r(double v_lin, double v_ang)
 {
-
   // calculate velocity difference left - right
   double d_v_ang = v_ang * AXLE_WIDTH; // delta v in [m/s]
 
@@ -719,12 +667,9 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l_setpoint, double *v_r
 
   *v_l_setpoint = v_l;
   *v_r_setpoint = v_r;
-  // convert to rounds per second
-  // *rps_l = v_l / TIRE_CIRCUMFERENCE;
-  // *rps_r = v_r / TIRE_CIRCUMFERENCE;
 
-  ROS_INFO("v_l: %g, v_r: %g", *v_l_setpoint, *v_r_setpoint);
-  ROS_INFO(" ");
+  //ROS_INFO("v_l: %g, v_r: %g", *v_l_setpoint, *v_r_setpoint);
+  //ROS_INFO(" ");
 }
 
 void publish_sensor_values(ros_publisher_t *pub, PhidgetCurrentInputHandle *ch_current, PhidgetTemperatureSensorHandle *ch_temp, double v_l_actual, double v_r_actual)
@@ -768,3 +713,129 @@ void calculate_distance(double speed, double* distance){
   
 }
 
+class motor_controller{
+
+  public:
+    int hub_port;
+    int hub_sn;
+
+    PhidgetMotorPositionControllerHandle ctrl_hdl;
+    PhidgetCurrentInputHandle current_hdl;
+    PhidgetTemperatureSensorHandle temp_hdl;
+
+    motor_controller(int hub_port, int hub_sn){
+      this.hub_port = hub_port;
+      this.hub_sn = hub_sn;
+      this.connected = false;
+    }
+
+    double get_speed(){
+
+    }
+
+    double get_temperature(){
+
+    }
+
+    double get_current(){
+
+    }
+
+    bool connect(){
+      if(!connect_position_controller()){
+        return false;
+      }
+      
+      if(!connect_current_sens()){
+        return false;
+      }
+      
+      if(!connect_temp_sens()){
+        return false;
+      }
+      connected = true;
+      return true;
+    }
+
+  private:
+    bool connected;
+
+    bool connect_current_sens()
+    {
+      PhidgetReturnCode res;
+      PhidgetCurrentInput_create(&current_hdl);
+
+      Phidget_setDeviceSerialNumber((PhidgetHandle)current_hdl, hub_sn);
+      Phidget_setHubPort((PhidgetHandle)current_hdl, hub_port);
+
+      ROS_INFO("Connecting to current sensor...");
+
+      res = Phidget_openWaitForAttachment((PhidgetHandle)current_hdl, PHIDGET_TIMEOUT_DEFAULT);
+      if (res != EPHIDGET_OK)
+      {
+        ROS_INFO("Connection to the current sensor failed; error 0x%x", res);
+        return false;
+      }
+      else
+      {
+        ROS_INFO("Connected");
+        PhidgetCurrentInput_setDataInterval(*ch, MOTOR_DATA_INTERVALL);
+        return true;
+      }
+    }
+
+    bool connect_temp_sens()
+    {
+      PhidgetReturnCode res;
+      PhidgetTemperatureSensor_create(&temp_hdl);
+
+      Phidget_setDeviceSerialNumber((PhidgetHandle)temp_hdl, hub_sn);
+      Phidget_setHubPort((PhidgetHandle)temp_hdl, hub_port);
+
+      ROS_INFO("Connecting to temperature sensor...");
+
+      res = Phidget_openWaitForAttachment((PhidgetHandle)temp_hdl, PHIDGET_TIMEOUT_DEFAULT);
+      if (res != EPHIDGET_OK)
+      {
+        ROS_INFO("Connection to the temp sensor failed; error 0x%x", res);
+        return false;
+      }
+      else
+      {
+        ROS_INFO("Connected");
+        PhidgetTemperatureSensor_setDataInterval(temp_hdl, 500);
+        return true;
+      }
+    }
+
+    bool connect_position_controller()
+    {
+      PhidgetReturnCode res;
+      PhidgetMotorPositionController_create(&ctrl_hdl);
+
+      Phidget_setDeviceSerialNumber((PhidgetHandle)ctrl_hdl, hub_sn);
+      Phidget_setHubPort((PhidgetHandle)ctrl_hdl, hub_port);
+
+      ROS_INFO("Connecting to position controller...");
+
+      res = Phidget_openWaitForAttachment((PhidgetHandle)ctrl_hdl, PHIDGET_TIMEOUT_DEFAULT);
+      if (res != EPHIDGET_OK)
+      {
+        ROS_INFO("Connection Failed; code: 0x%x", res); // Exit in error
+        return false;
+      }
+      else
+      {
+        ROS_INFO("Connected");
+        PhidgetMotorPositionController_setDataInterval(ctrl_hdl, ENCODER_DATA_INTERVALL);
+        PhidgetMotorPositionController_setAcceleration(ctrl_hdl, POSITION_CONTROLLER_ACCELERATION);
+        PhidgetMotorPositionController_setCurrentLimit(ctrl_hdl, MOTOR_CURRENT_LIMIT);
+        PhidgetMotorPositionController_setFanMode(ctrl_hdl, FAN_MODE_AUTO);
+
+        PhidgetMotorPositionController_setKd(ctrl_hdl, K_D);
+        PhidgetMotorPositionController_setKi(ctrl_hdl, K_I);
+        PhidgetMotorPositionController_setKp(ctrl_hdl, K_P);
+        return true;
+      }
+    }
+}
