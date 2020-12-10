@@ -47,23 +47,10 @@
 
 typedef struct
 {
-  ros::Time t_old;
-  int64_t pos_old;
-  PhidgetEncoderHandle handle;
-} encoder_t;
-
-typedef struct
-{
   double dt;
   double integral;
   double last_error;
 } mc_pid_t;
-
-enum pc_direction_t
-{
-  backward = 1000000000000000,
-  forward = 1000000000000000  // furthest target position according to the api doc
-};
 
 enum controller_side_t
 {
@@ -83,13 +70,6 @@ enum mc_state_t
 
 }
 
-typedef struct 
-{
-  bool engaged;
-
-}pc_command_t;
-
-
 typedef struct
 {
   ros::Publisher temp_l;
@@ -100,12 +80,7 @@ typedef struct
   ros::Publisher speed_r;
 } ros_publisher_t;
 
-typedef struct
-{
-  PhidgetTemperatureSensorHandle tmp_handle;
-  PhidgetCurrentInputHandle current_handle;
-  PhidgetMotorPositionControllerHandle ctrl_handle;
-}controller_t;
+typedef void (*cb_ptr)(double val);
 
 
 double v_l_actual;
@@ -387,83 +362,6 @@ void calculate_duty_cycle(mc_pid_t *pid, double *duty_cycle, double setpoint, do
   }
 }
 
-void get_speed(encoder_t *encoder, double *v_actual)
-{
-  int64_t position = 0;
-  PhidgetEncoder_getPosition(encoder->handle, &position);
-  ros::Time now = ros::Time::now();
-
-  int64_t d_pos = position - encoder->pos_old;
-  ros::Duration diff_time = now - encoder->t_old;
-
-  double d_time = diff_time.toSec();
-
-  *v_actual = ((d_pos / d_time) / (ENCODER_RESOLUTION * GEAR_RATIO)) * TIRE_CIRCUMFERENCE;
-
-  encoder->pos_old = position;
-  encoder->t_old = now;
-}
-
-void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg)
-{
-  cmd_vel = *msg;
-}
-
-bool connect_controller(PhidgetDCMotorHandle *ch, controller_side_t side)
-{
-  PhidgetReturnCode res;
-
-  PhidgetDCMotor_create(ch);
-
-  Phidget_setDeviceSerialNumber((PhidgetHandle)*ch, VINT_SN);
-  Phidget_setHubPort((PhidgetHandle)*ch, side);
-
-  ROS_INFO("Connecting to device...");
-
-  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, PHIDGET_TIMEOUT_DEFAULT);
-  if (res != EPHIDGET_OK)
-  {
-    ROS_INFO("Connection Failed; code: 0x%x", res); // Exit in error
-    return false;
-  }
-  else
-  {
-    ROS_INFO("Connected");
-    PhidgetDCMotor_setFanMode(*ch, FAN_MODE_AUTO);
-    PhidgetDCMotor_setTargetBrakingStrength(*ch, MOTOR_BRAKING_STRENGTH);
-    PhidgetDCMotor_setAcceleration(*ch, MOTOR_ACCELERATION);
-    PhidgetDCMotor_setDataInterval(*ch, MOTOR_DATA_INTERVALL);
-    PhidgetDCMotor_setCurrentLimit(*ch, MOTOR_CURRENT_LIMIT);
-    return true;
-  }
-}
-
-bool connect_encoder(PhidgetEncoderHandle *ch, controller_side_t side)
-{
-  PhidgetReturnCode res;
-  PhidgetEncoder_create(ch);
-
-  Phidget_setDeviceSerialNumber((PhidgetHandle)*ch, VINT_SN);
-  Phidget_setHubPort((PhidgetHandle)*ch, side);
-
-  ROS_INFO("Connecting to encoder...");
-
-  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, PHIDGET_TIMEOUT_DEFAULT);
-  if (res != EPHIDGET_OK)
-  {
-    ROS_INFO("Connection Failed; code: 0x%x", res); // Exit in error
-    return false;
-  }
-  else
-  {
-    ROS_INFO("Connected");
-    PhidgetEncoder_setDataInterval(*ch, ENCODER_DATA_INTERVALL);
-    return true;
-  }
-}
-
-
-
 void report_device_info(PhidgetHandle handle)
 {
   const char *name;
@@ -476,32 +374,6 @@ void report_device_info(PhidgetHandle handle)
   Phidget_getHubPort(handle, &port);
 
   ROS_INFO("device %s connected to port %d (VINT SN: %d) ", name, port, SN);
-}
-
-
-
-bool connect_current_sens(PhidgetCurrentInputHandle *ch, controller_side_t side)
-{
-  PhidgetReturnCode res;
-  PhidgetCurrentInput_create(ch);
-
-  Phidget_setDeviceSerialNumber((PhidgetHandle)*ch, VINT_SN);
-  Phidget_setHubPort((PhidgetHandle)*ch, side);
-
-  ROS_INFO("Connecting to current sensor...");
-
-  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, PHIDGET_TIMEOUT_DEFAULT);
-  if (res != EPHIDGET_OK)
-  {
-    ROS_INFO("Connection to the current sensor failed; error 0x%x", res);
-    return false;
-  }
-  else
-  {
-    ROS_INFO("Connected");
-    PhidgetCurrentInput_setDataInterval(*ch, MOTOR_DATA_INTERVALL);
-    return true;
-  }
 }
 
 double calculate_r(double v_lin, double v_ang)
@@ -643,27 +515,6 @@ void publish_sensor_values(ros_publisher_t *pub, PhidgetCurrentInputHandle *ch_c
 
 }
 
-void CCONV positionChangeHandler_left(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered)
-{
-  v_l_actual = (((double)positionChange / timeChange) / (ENCODER_RESOLUTION * GEAR_RATIO)) * TIRE_CIRCUMFERENCE * 1000;
-  std_msgs::Float64 speed;
-
-  speed.data = v_l_actual;
-  pub.speed_l.publish(speed);
-}
-
-void CCONV positionChangeHandler_right(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered)
-{
-  v_r_actual = (((double)positionChange / timeChange) / (ENCODER_RESOLUTION * GEAR_RATIO)) * TIRE_CIRCUMFERENCE * 1000;
-  std_msgs::Float64 speed;
-
-  speed.data = v_r_actual;
-  pub.speed_r.publish(speed);
-  }
-
-void calculate_distance(double speed, double* distance){
-  
-}
 
 class motor_controller{
 
@@ -681,19 +532,35 @@ class motor_controller{
       this.connected = false;
     }
 
-    double get_speed(){
+    double get_speed(){   //returns the wheel speed in m/s
       return speed;
     }
 
-    double get_temperature(){
+    double get_temperature(){   //returns the temperature in °C
       return temperature;
     }
 
-    double get_current(){
+    double get_current(){   //returns the motor current in A
       return current;
     }
 
-    bool connect(){
+    bool get_connected(){   //checks if the motor controller is connected/if the connection was lost
+
+    }
+
+    void attach_speed_cb(cb_ptr ptr){   //attaches the given callback function to the speed update event (if a speed update event occurs, the given function is called and provoided with the new speed value) 
+      speed_cb = ptr;
+    }
+
+    void attach_current_cb(cb_ptr ptr){   //attaches the given callback function to the current update event (if a current update event occurs, the given function is called and provoided with the new current value) 
+      current_cb = ptr;
+    }
+    
+    void attach_temperature_cb(cb_ptr ptr){   //attaches the given callback function to the temperature update event (if a temperature update event occurs, the given function is called and provoided with the new temperature value) 
+      temperature_cb = ptr;
+    }
+
+    bool connect(){   //connect to all relevant channels on the controller
       if(!connect_position_controller()){
         return false;
       }
@@ -709,11 +576,36 @@ class motor_controller{
       return true;
     }
 
+    bool set_speed(double v){   //set the motor speed to the given value
+
+    }
+
+    bool engage_motors(bool engage){    //engage or disengage the motor position controller
+
+    }
+
+    bool enable_watchdog(int time){   //enables the motor controllers internal watchdog
+
+    }
+
+    bool reset_watchdog(){    //resets the motor controllers internal watchdog. if this is not called within the time specified above, the motors stop and the controller disconnects
+
+    }
+
+    bool set_controller_parameters(double k_p, double k_i, double k_d){   //sets the parameters for the internal PID controller of the motor position controller
+
+    }
+
+
   private:
     bool connected;
     double speed;
     double temperature;
     double current;
+
+    cb_ptr speed_cb;
+    cb_ptr current_cb;
+    cb_ptr temperature_cb;
 
     void CCONV positionChangeHandler(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered)
     {
@@ -811,6 +703,9 @@ class motor_controller{
       }
     }
 
+    bool check_connection(){
+
+    }
 
 
 }
