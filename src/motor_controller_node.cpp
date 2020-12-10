@@ -36,7 +36,11 @@
 #define MOTOR_DATA_INTERVALL 100   //data interval in ms [100:60000]
 #define ENCODER_DATA_INTERVALL 100 //data interval in ms [100:60000]
 
-#define PID_I_MAX 1.5
+#define POSITION_CONTROLLER_DATA_INTERVAL 20 // [ms]
+#define POSITION_CONTROLLER_FAILSAFE_TIMER 500 // [ms]
+#define POSITION_CONTROLLER_CURRENT_REGULATOR_GAIN 10 //
+//#define POSITION_CONTROLLER_RESCALE_FACTOR 5400 // encoder steps per revolution
+
 #define K_P 0.5 // P component of the PID     I dont know what im doing, should probably be changed!
 #define K_I 1  // I component of the PID
 #define K_D 0  // D component of the PID
@@ -55,11 +59,36 @@ typedef struct
   double last_error;
 } mc_pid_t;
 
+enum pc_direction_t
+{
+  backward = 1000000000000000,
+  forward = 1000000000000000  // furthest target position according to the api doc
+};
+
 enum controller_side_t
 {
   left = 0x00,
   right = 0x01
 };
+
+enum mc_state_t
+{
+  init = 0x00,
+  connect_controllers,
+  wait_for_rtd,
+  drive,
+  brake,
+  disengaged,
+  deinit
+
+}
+
+typedef struct 
+{
+  bool engaged;
+
+}pc_command_t;
+
 
 typedef struct
 {
@@ -70,6 +99,14 @@ typedef struct
   ros::Publisher speed_l;
   ros::Publisher speed_r;
 } ros_publisher_t;
+
+typedef struct
+{
+  PhidgetTemperatureSensorHandle tmp_handle;
+  PhidgetCurrentInputHandle current_handle;
+  PhidgetMotorPositionControllerHandle ctrl_handle;
+}controller_t;
+
 
 double v_l_actual;
 double v_r_actual;
@@ -95,6 +132,8 @@ bool connect_controller(PhidgetDCMotorHandle *ch, controller_side_t side);
 
 bool connect_encoder(PhidgetEncoderHandle *ch, controller_side_t side);
 
+bool connect_position_controller(PhidgetMotorPositionControllerHandle *ch, controller_side_t side);
+
 bool connect_temp_sens(PhidgetTemperatureSensorHandle *ch, controller_side_t side);
 
 bool connect_current_sens(PhidgetCurrentInputHandle *ch, controller_side_t side);
@@ -106,6 +145,12 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l, double *v_r);
 void report_device_info(PhidgetHandle handle);
 
 void publish_sensor_values(ros_publisher_t *pub, PhidgetCurrentInputHandle *ch_current, PhidgetTemperatureSensorHandle *ch_temp, double v_l_actual, double v_r_actual);
+
+void calculate_distance(double speed, double* distance);
+
+
+
+
 /**
  * This tutorial demonstrates simple sending of messages over the ROS system.
  */
@@ -124,6 +169,9 @@ int main(int argc, char **argv)
    * You must call one of the versions of ros::init() before using any other
    * part of the ROS system.
    */
+
+  mc_state_t state = 0x00;
+
   ros::init(argc, argv, "motor_controller_node");
 
   ros::NodeHandle n;
@@ -162,52 +210,58 @@ int main(int argc, char **argv)
 
   ros::Rate loop_rate(FREQUENCY);
 
-  PhidgetDCMotorHandle ch;
+  // PhidgetDCMotorHandle ch;
 
-  // Connect the motor controllers
-  PhidgetDCMotorHandle mc_handle_1;
-  PhidgetDCMotorHandle mc_handle_2;
+  // // Connect the motor controllers
+  // PhidgetDCMotorHandle mc_handle_1;
+  // PhidgetDCMotorHandle mc_handle_2;
 
-  PhidgetDCMotorHandle *mc_handles[2];
+  // PhidgetDCMotorHandle *mc_handles[2];
 
-  mc_handles[left] = &mc_handle_1;
-  mc_handles[right] = &mc_handle_2;
+  // mc_handles[left] = &mc_handle_1;
+  // mc_handles[right] = &mc_handle_2;
 
-  connect_controller(mc_handles[left], left);
-  connect_controller(mc_handles[right], right);
+  // connect_controller(mc_handles[left], left);
+  // connect_controller(mc_handles[right], right);
 
-  report_device_info((PhidgetHandle)*mc_handles[left]);
-  report_device_info((PhidgetHandle)*mc_handles[right]);
+  // report_device_info((PhidgetHandle)*mc_handles[left]);
+  // report_device_info((PhidgetHandle)*mc_handles[right]);
 
   // Connect to the motor encoders
 
-  encoder_t encoder_1;
-  encoder_t encoder_2;
+  // encoder_t encoder_1;
+  // encoder_t encoder_2;
 
-  encoder_t *encoder[2];
+  // encoder_t *encoder[2];
 
-  encoder[left] = &encoder_1;
-  encoder[right] = &encoder_2;
+  // encoder[left] = &encoder_1;
+  // encoder[right] = &encoder_2;
 
-  encoder[left]->pos_old = 0;
-  encoder[left]->t_old = ros::Time::now();
-  connect_encoder(&(encoder[left]->handle), left);
+  // encoder[left]->pos_old = 0;
+  // encoder[left]->t_old = ros::Time::now();
+  // connect_encoder(&(encoder[left]->handle), left);
 
-  PhidgetEncoder_setOnPositionChangeHandler(encoder[left]->handle, positionChangeHandler_left, NULL);
 
-  encoder[right]->pos_old = 0;
-  encoder[right]->t_old = ros::Time::now();
-  connect_encoder(&(encoder[right]->handle), right);
+  // encoder[right]->pos_old = 0;
+  // encoder[right]->t_old = ros::Time::now();
+  // connect_encoder(&(encoder[right]->handle), right);
 
-  PhidgetEncoder_setOnPositionChangeHandler(encoder[right]->handle, positionChangeHandler_right, NULL);
 
-  PhidgetTemperatureSensorHandle ch_tmp[2];
-  connect_temp_sens(&ch_tmp[left], left);
-  connect_temp_sens(&ch_tmp[right], right);
+  // PhidgetTemperatureSensorHandle ch_tmp[2];
+  // connect_temp_sens(&ch_tmp[left], left);
+  // connect_temp_sens(&ch_tmp[right], right);
 
-  PhidgetCurrentInputHandle ch_current[2];
-  connect_current_sens(&ch_current[left], left);
-  connect_current_sens(&ch_current[right], right);
+  // PhidgetCurrentInputHandle ch_current[2];
+  // connect_current_sens(&ch_current[left], left);
+  // connect_current_sens(&ch_current[right], right);
+
+  // PhidgetMotorPositionControllerHandle pos_ctrl[2];
+  // connect_position_controller(&pos_ctrl[left], left);
+  // connect_position_controller(&pos_ctrl[right], right);
+
+  PhidgetMotorPositionController_setOnPositionChangeHandler(pos_ctrl[right]->handle, positionChangeHandler_right, NULL);
+  PhidgetMotorPositionController_setOnPositionChangeHandler(pos_ctrl[left]->handle, positionChangeHandler_left, NULL);
+
 
   std_msgs::String msg;
 
@@ -234,22 +288,61 @@ int main(int argc, char **argv)
     /**
      * This is a message object. You stuff it with data, and then publish it.
      */
+    switch(state){
+      case init:  // Initialize variables and ros publishers and subscribers; create controller handles
+      
+      controller_t controller[2];
+      initialize_controller(&controller[left], left);
+      initialize_controller(&controller[right], right);
+      break;
 
+      case connect_controller:  // connect and configure all the controller devices
+
+      break;
+
+      case wait_for_rtd:    // check if the robot is OK and wait for the ready to drive command
+
+      break;
+
+      case drive: // drive the robot
+
+      break;
+
+      case brake: //brake to a standstill (preferrably fast)
+
+      break;
+
+      case disengaged:  // disengage the controll loop of the controllers to allow tire movements
+
+      break;
+
+      case deinit:  // close all connections and shutdown
+
+      break;
+
+    }
     if (assert_driving_command())
     {
       calculate_v(cmd_vel, &v_l_setpoint, &v_r_setpoint); // calculate the setpoint speeds for both wheels
 
+      calculate_driving_command();
+      calculate_driving_command();
       // get_speed(encoder[left], &v_l_actual); // caculate the actual speed of the wheels
       // get_speed(encoder[right], &v_r_actual);
 
-      calculate_duty_cycle(&pid[left], &dc_l, v_l_setpoint, v_l_actual, 24);  // calculate the duty cycle using a simple P controller
-      calculate_duty_cycle(&pid[right], &dc_r, v_r_setpoint, v_r_actual, 24); // with a feedforward component
+      // calculate_duty_cycle(&pid[left], &dc_l, v_l_setpoint, v_l_actual, 24);  // calculate the duty cycle using a simple P controller
+      // calculate_duty_cycle(&pid[right], &dc_r, v_r_setpoint, v_r_actual, 24); // with a feedforward component
 
-      set_duty_cycle(mc_handles[left], dc_l); // apply the calculated duty cycle values
-      set_duty_cycle(mc_handles[right], dc_r);
+      // set_duty_cycle(mc_handles[left], dc_l); // apply the calculated duty cycle values
+      // set_duty_cycle(mc_handles[right], dc_r);
 
-      publish_sensor_values(&pub, ch_current, ch_tmp, v_l_actual, v_r_actual);
     }
+    else{
+
+    }
+
+    publish_sensor_values(&pub, ch_current, ch_tmp, v_l_actual, v_r_actual);
+
 
     //PhidgetDCMotor_setTargetVelocity(ch, cmd_vel.linear.x);
 
@@ -396,6 +489,37 @@ bool connect_encoder(PhidgetEncoderHandle *ch, controller_side_t side)
   {
     ROS_INFO("Connected");
     PhidgetEncoder_setDataInterval(*ch, ENCODER_DATA_INTERVALL);
+    return true;
+  }
+}
+
+bool connect_position_controller(PhidgetMotorPositionControllerHandle *ch, controller_side_t side)
+{
+  PhidgetReturnCode res;
+  PhidgetMotorPositionController_create(ch);
+
+  Phidget_setDeviceSerialNumber((PhidgetHandle)*ch, VINT_SN);
+  Phidget_setHubPort((PhidgetHandle)*ch, side);
+
+  ROS_INFO("Connecting to position controller...");
+
+  res = Phidget_openWaitForAttachment((PhidgetHandle)*ch, PHIDGET_TIMEOUT_DEFAULT);
+  if (res != EPHIDGET_OK)
+  {
+    ROS_INFO("Connection Failed; code: 0x%x", res); // Exit in error
+    return false;
+  }
+  else
+  {
+    ROS_INFO("Connected");
+    PhidgetMotorPositionController_setDataInterval(*ch, ENCODER_DATA_INTERVALL);
+    PhidgetMotorPositionController_setAcceleration(*ch, POSITION_CONTROLLER_ACCELERATION);
+    PhidgetMotorPositionController_setCurrentLimit(*ch, MOTOR_CURRENT_LIMIT);
+    PhidgetMotorPositionController_setFanMode(*ch, FAN_MODE_AUTO);
+
+    PhidgetMotorPositionController_setKd(*ch, K_D);
+    PhidgetMotorPositionController_setKi(*ch, K_I);
+    PhidgetMotorPositionController_setKp(*ch, K_P);
     return true;
   }
 }
@@ -621,3 +745,8 @@ void CCONV positionChangeHandler_right(PhidgetEncoderHandle ch, void *ctx, int p
 
   speed.data = v_r_actual;
   pub.speed_r.publish(speed);}
+
+void calculate_distance(double speed, double* distance){
+  
+}
+
