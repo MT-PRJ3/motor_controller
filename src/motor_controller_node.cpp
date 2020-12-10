@@ -198,55 +198,6 @@ int main(int argc, char **argv)
 
   ros::Rate loop_rate(FREQUENCY);
 
-  // PhidgetDCMotorHandle ch;
-
-  // // Connect the motor controllers
-  // PhidgetDCMotorHandle mc_handle_1;
-  // PhidgetDCMotorHandle mc_handle_2;
-
-  // PhidgetDCMotorHandle *mc_handles[2];
-
-  // mc_handles[left] = &mc_handle_1;
-  // mc_handles[right] = &mc_handle_2;
-
-  // connect_controller(mc_handles[left], left);
-  // connect_controller(mc_handles[right], right);
-
-  // report_device_info((PhidgetHandle)*mc_handles[left]);
-  // report_device_info((PhidgetHandle)*mc_handles[right]);
-
-  // Connect to the motor encoders
-
-  // encoder_t encoder_1;
-  // encoder_t encoder_2;
-
-  // encoder_t *encoder[2];
-
-  // encoder[left] = &encoder_1;
-  // encoder[right] = &encoder_2;
-
-  // encoder[left]->pos_old = 0;
-  // encoder[left]->t_old = ros::Time::now();
-  // connect_encoder(&(encoder[left]->handle), left);
-
-
-  // encoder[right]->pos_old = 0;
-  // encoder[right]->t_old = ros::Time::now();
-  // connect_encoder(&(encoder[right]->handle), right);
-
-
-  // PhidgetTemperatureSensorHandle ch_tmp[2];
-  // connect_temp_sens(&ch_tmp[left], left);
-  // connect_temp_sens(&ch_tmp[right], right);
-
-  // PhidgetCurrentInputHandle ch_current[2];
-  // connect_current_sens(&ch_current[left], left);
-  // connect_current_sens(&ch_current[right], right);
-
-  // PhidgetMotorPositionControllerHandle pos_ctrl[2];
-  // connect_position_controller(&pos_ctrl[left], left);
-  // connect_position_controller(&pos_ctrl[right], right);
-
   PhidgetMotorPositionController_setOnPositionChangeHandler(pos_ctrl[right]->handle, positionChangeHandler_right, NULL);
   PhidgetMotorPositionController_setOnPositionChangeHandler(pos_ctrl[left]->handle, positionChangeHandler_left, NULL);
 
@@ -707,7 +658,8 @@ void CCONV positionChangeHandler_right(PhidgetEncoderHandle ch, void *ctx, int p
   std_msgs::Float64 speed;
 
   speed.data = v_r_actual;
-  pub.speed_r.publish(speed);}
+  pub.speed_r.publish(speed);
+  }
 
 void calculate_distance(double speed, double* distance){
   
@@ -730,15 +682,15 @@ class motor_controller{
     }
 
     double get_speed(){
-
+      return speed;
     }
 
     double get_temperature(){
-
+      return temperature;
     }
 
     double get_current(){
-
+      return current;
     }
 
     bool connect(){
@@ -759,6 +711,22 @@ class motor_controller{
 
   private:
     bool connected;
+    double speed;
+    double temperature;
+    double current;
+
+    void CCONV positionChangeHandler(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered)
+    {
+    speed = (((double)positionChange / timeChange) / (ENCODER_RESOLUTION * GEAR_RATIO)) * TIRE_CIRCUMFERENCE * 1000;
+    }
+
+    void CCONV currentChangeHandler(PhidgetCurrentInputHandle ch, void *ctx, double current) {
+      this.current = current;
+    }
+
+    void CCONV temperatureChangeHandler(PhidgetTemperatureSensorHandle ch, void *ctx, double temperature) {
+      this.temperature = temperature;
+    }
 
     bool connect_current_sens()
     {
@@ -780,6 +748,7 @@ class motor_controller{
       {
         ROS_INFO("Connected");
         PhidgetCurrentInput_setDataInterval(*ch, MOTOR_DATA_INTERVALL);
+        PhidgetCurrentInput_setOnCurrentChangeHandler(ch, currentChangeHandler, NULL);
         return true;
       }
     }
@@ -804,6 +773,7 @@ class motor_controller{
       {
         ROS_INFO("Connected");
         PhidgetTemperatureSensor_setDataInterval(temp_hdl, 500);
+        PhidgetTemperatureSensor_setOnTemperatureChangeHandler(ch, temperatureChangeHandler, NULL);
         return true;
       }
     }
@@ -832,10 +802,15 @@ class motor_controller{
         PhidgetMotorPositionController_setCurrentLimit(ctrl_hdl, MOTOR_CURRENT_LIMIT);
         PhidgetMotorPositionController_setFanMode(ctrl_hdl, FAN_MODE_AUTO);
 
+        PhidgetMotorPositionController_setOnPositionChangeHandler(ctrl_hdl, positionChangeHandler, NULL);
+
         PhidgetMotorPositionController_setKd(ctrl_hdl, K_D);
         PhidgetMotorPositionController_setKi(ctrl_hdl, K_I);
         PhidgetMotorPositionController_setKp(ctrl_hdl, K_P);
         return true;
       }
     }
+
+
+
 }
