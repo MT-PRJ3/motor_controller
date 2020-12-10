@@ -172,18 +172,6 @@ int main(int argc, char **argv)
 
   mc_state_t state = 0x00;
 
-  ros::init(argc, argv, "motor_controller_node");
-
-  ros::NodeHandle n;
-
-  pub.temp_l = n.advertise<sensor_msgs::Temperature>("temp_l", 1000);
-  pub.temp_r = n.advertise<sensor_msgs::Temperature>("temp_r", 1000);
-  pub.current_l = n.advertise<std_msgs::Float64>("current_l", 1000);
-  pub.current_r = n.advertise<std_msgs::Float64>("current_r", 1000);
-  pub.speed_l = n.advertise<std_msgs::Float64>("speed_l", 1000);
-  pub.speed_r = n.advertise<std_msgs::Float64>("speed_r", 1000);
-  ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 1000, cmd_vel_cb);
-
   /**
    * NodeHandle is the main access point to communications with the ROS system.
    * The first NodeHandle constructed will fully initialize this node, and the last
@@ -290,13 +278,43 @@ int main(int argc, char **argv)
      */
     switch(state){
       case init:  // Initialize variables and ros publishers and subscribers; create controller handles
-      
+      bool ret;
       controller_t controller[2];
-      initialize_controller(&controller[left], left);
-      initialize_controller(&controller[right], right);
+
+      ros::init(argc, argv, "motor_controller_node");
+
+      ros::NodeHandle n;
+
+      pub.temp_l = n.advertise<sensor_msgs::Temperature>("temp_l", 1000);
+      pub.temp_r = n.advertise<sensor_msgs::Temperature>("temp_r", 1000);
+      pub.current_l = n.advertise<std_msgs::Float64>("current_l", 1000);
+      pub.current_r = n.advertise<std_msgs::Float64>("current_r", 1000);
+      pub.speed_l = n.advertise<std_msgs::Float64>("speed_l", 1000);
+      pub.speed_r = n.advertise<std_msgs::Float64>("speed_r", 1000);
+      ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 1000, cmd_vel_cb);
+
+      ret = initialize_controller(&controller[left], left);
+      if(!ret){
+        ROS_INFO("Error initializing the left motor controller; aborting");
+        state = deinit;
+        break;
+      }
+
+      ret = initialize_controller(&controller[right], right);
+      if(!ret){
+        ROS_INFO("Error initializing the right motor controller; aborting");
+        state = deinit;
+        break;
+      }
+
+      state = connect_controller;
       break;
 
       case connect_controller:  // connect and configure all the controller devices
+
+        connect_position_controller(&controller[left].ctrl_handle, left);
+        connect_position_controller(&controller[left].ctrl_handle, right);
+
 
       break;
 
