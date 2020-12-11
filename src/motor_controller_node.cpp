@@ -38,7 +38,8 @@
 
 #define POSITION_CONTROLLER_DATA_INTERVAL 20 // [ms]
 #define POSITION_CONTROLLER_FAILSAFE_TIMER 500 // [ms]
-#define POSITION_CONTROLLER_CURRENT_REGULATOR_GAIN 10 //
+#define POSITION_CONTROLLER_CURRENT_REGULATOR_GAIN 10 // [?]
+#define POSITION_CONTROLLER_ACCELERATION 100 // [?]
 //#define POSITION_CONTROLLER_RESCALE_FACTOR 5400 // encoder steps per revolution
 
 #define K_P 0.5 // P component of the PID     I dont know what im doing, should probably be changed!
@@ -67,8 +68,7 @@ enum mc_state_t
   brake,
   disengaged,
   deinit
-
-}
+};
 
 typedef struct
 {
@@ -88,30 +88,9 @@ double v_r_actual;
 
 ros_publisher_t pub;
 
-void CCONV positionChangeHandler_left(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered);
-
-void CCONV positionChangeHandler_right(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered);
-
-
 bool assert_driving_command();
 
-void set_duty_cycle(PhidgetDCMotorHandle *handle, double duty_cycle);
-
-void calculate_duty_cycle(mc_pid_t *pid, double *duty_cycle, double setpoint, double actual_value, double battery_voltage);
-
-void get_speed(encoder_t *encoder, double *v_actual);
-
 void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg);
-
-bool connect_controller(PhidgetDCMotorHandle *ch, controller_side_t side);
-
-bool connect_encoder(PhidgetEncoderHandle *ch, controller_side_t side);
-
-bool connect_position_controller(PhidgetMotorPositionControllerHandle *ch, controller_side_t side);
-
-bool connect_temp_sens(PhidgetTemperatureSensorHandle *ch, controller_side_t side);
-
-bool connect_current_sens(PhidgetCurrentInputHandle *ch, controller_side_t side);
 
 double calculate_r(double v_lin, double v_ang);
 
@@ -120,8 +99,6 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l, double *v_r);
 void report_device_info(PhidgetHandle handle);
 
 void publish_sensor_values(ros_publisher_t *pub, PhidgetCurrentInputHandle *ch_current, PhidgetTemperatureSensorHandle *ch_temp, double v_l_actual, double v_r_actual);
-
-void calculate_distance(double speed, double* distance);
 
 
 
@@ -145,7 +122,7 @@ int main(int argc, char **argv)
    * part of the ROS system.
    */
 
-  mc_state_t state = 0x00;
+  mc_state_t state = init;
 
   /**
    * NodeHandle is the main access point to communications with the ROS system.
@@ -173,10 +150,6 @@ int main(int argc, char **argv)
 
   ros::Rate loop_rate(FREQUENCY);
 
-  PhidgetMotorPositionController_setOnPositionChangeHandler(pos_ctrl[right]->handle, positionChangeHandler_right, NULL);
-  PhidgetMotorPositionController_setOnPositionChangeHandler(pos_ctrl[left]->handle, positionChangeHandler_left, NULL);
-
-
   std_msgs::String msg;
 
   double v_l_setpoint;
@@ -197,50 +170,32 @@ int main(int argc, char **argv)
   pid[right].integral = 0;
   pid[right].last_error = 0;
 
+  // Initialize variables and ros publishers and subscribers; create controller handles
+    bool ret;
+
+    ros::init(argc, argv, "motor_controller_node");
+
+    ros::NodeHandle n;
+
+    pub.temp_l = n.advertise<sensor_msgs::Temperature>("temp_l", 1000);
+    pub.temp_r = n.advertise<sensor_msgs::Temperature>("temp_r", 1000);
+    pub.current_l = n.advertise<std_msgs::Float64>("current_l", 1000);
+    pub.current_r = n.advertise<std_msgs::Float64>("current_r", 1000);
+    pub.speed_l = n.advertise<std_msgs::Float64>("speed_l", 1000);
+    pub.speed_r = n.advertise<std_msgs::Float64>("speed_r", 1000);
+    ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 1000, cmd_vel_cb);
+
+
+    state = connect_controllers;
+
   while (ros::ok())
   {
     /**
      * This is a message object. You stuff it with data, and then publish it.
      */
     switch(state){
-      case init:  // Initialize variables and ros publishers and subscribers; create controller handles
-      bool ret;
-      controller_t controller[2];
 
-      ros::init(argc, argv, "motor_controller_node");
-
-      ros::NodeHandle n;
-
-      pub.temp_l = n.advertise<sensor_msgs::Temperature>("temp_l", 1000);
-      pub.temp_r = n.advertise<sensor_msgs::Temperature>("temp_r", 1000);
-      pub.current_l = n.advertise<std_msgs::Float64>("current_l", 1000);
-      pub.current_r = n.advertise<std_msgs::Float64>("current_r", 1000);
-      pub.speed_l = n.advertise<std_msgs::Float64>("speed_l", 1000);
-      pub.speed_r = n.advertise<std_msgs::Float64>("speed_r", 1000);
-      ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 1000, cmd_vel_cb);
-
-      ret = initialize_controller(&controller[left], left);
-      if(!ret){
-        ROS_INFO("Error initializing the left motor controller; aborting");
-        state = deinit;
-        break;
-      }
-
-      ret = initialize_controller(&controller[right], right);
-      if(!ret){
-        ROS_INFO("Error initializing the right motor controller; aborting");
-        state = deinit;
-        break;
-      }
-
-      state = connect_controller;
-      break;
-
-      case connect_controller:  // connect and configure all the controller devices
-
-        connect_position_controller(&controller[left].ctrl_handle, left);
-        connect_position_controller(&controller[left].ctrl_handle, right);
-
+      case connect_controllers:  // connect and configure all the controller devices
 
       break;
 
@@ -262,6 +217,10 @@ int main(int argc, char **argv)
 
       case deinit:  // close all connections and shutdown
 
+      //break;
+
+      default:
+
       break;
 
     }
@@ -269,8 +228,6 @@ int main(int argc, char **argv)
     {
       calculate_v(cmd_vel, &v_l_setpoint, &v_r_setpoint); // calculate the setpoint speeds for both wheels
 
-      calculate_driving_command();
-      calculate_driving_command();
       // get_speed(encoder[left], &v_l_actual); // caculate the actual speed of the wheels
       // get_speed(encoder[right], &v_r_actual);
 
@@ -285,7 +242,7 @@ int main(int argc, char **argv)
 
     }
 
-    publish_sensor_values(&pub, ch_current, ch_tmp, v_l_actual, v_r_actual);
+    //publish_sensor_values(&pub, ch_current, ch_tmp, v_l_actual, v_r_actual);
 
 
     //PhidgetDCMotor_setTargetVelocity(ch, cmd_vel.linear.x);
@@ -310,56 +267,6 @@ int main(int argc, char **argv)
 bool assert_driving_command()
 {
   return true;
-}
-
-void set_duty_cycle(PhidgetDCMotorHandle *handle, double duty_cycle)
-{
-  ROS_INFO("duty cycle: %g", duty_cycle);
-  PhidgetReturnCode res;
-  res = PhidgetDCMotor_setTargetVelocity(*handle, duty_cycle);
-}
-
-void calculate_duty_cycle(mc_pid_t *pid, double *duty_cycle, double setpoint, double actual_value, double battery_voltage)
-{
-  // Feedforward
-  //  Calculating the estimated duty cycle needed for the requested engine speed.
-  double dc_ff = setpoint / (battery_voltage * NOMINAL_MOTOR_SPEED * TIRE_CIRCUMFERENCE / NOMINAL_MOTOR_VOLTAGE);
-
-  // Feedback loop
-  //  A basic PID controller that corrects the error from the engine load
-  double error = setpoint - actual_value;
-
-  double dc_p = K_P * error; // P compontent
-
-  pid->integral = pid->integral + (error * pid->dt);
-  double dc_i = K_I * pid->integral; // I component
-
-  if(pid->integral > PID_I_MAX){
-    pid->integral = PID_I_MAX;
-  }
-
-  if(pid->integral < -PID_I_MAX){
-    pid->integral = -PID_I_MAX;
-  }
-
-  double dc_d = K_D * (error - pid->last_error) / pid->dt; // D component
-
-  //ROS_INFO("feedforward: %g, dc_P: %g, dc_I: %g, dc_D: %g", dc_ff, dc_p, dc_i, dc_d);
-  // adding feedforward and feedback loop
-  *duty_cycle = dc_ff + dc_p + dc_i;
-  //ROS_INFO("duty_cycle: %g", *duty_cycle);
-
-  pid->last_error = error;
-
-  // Saturate output
-  if (*duty_cycle > 1)
-  {
-    *duty_cycle = 1;
-  }
-  if (*duty_cycle < -1)
-  {
-    *duty_cycle = -1;
-  }
 }
 
 void report_device_info(PhidgetHandle handle)
@@ -521,15 +428,18 @@ class motor_controller{
   public:
     int hub_port;
     int hub_sn;
+    double speed;
+    double temperature;
+    double current;
 
     PhidgetMotorPositionControllerHandle ctrl_hdl;
     PhidgetCurrentInputHandle current_hdl;
     PhidgetTemperatureSensorHandle temp_hdl;
 
     motor_controller(int hub_port, int hub_sn){
-      this.hub_port = hub_port;
-      this.hub_sn = hub_sn;
-      this.connected = false;
+      this->hub_port = hub_port;
+      this->hub_sn = hub_sn;
+      this->connected = false;
     }
 
     double get_speed(){   //returns the wheel speed in m/s
@@ -545,7 +455,7 @@ class motor_controller{
     }
 
     bool get_connected(){   //checks if the motor controller is connected/if the connection was lost
-
+      return false;
     }
 
     void attach_speed_cb(cb_ptr ptr){   //attaches the given callback function to the speed update event (if a speed update event occurs, the given function is called and provoided with the new speed value) 
@@ -577,47 +487,44 @@ class motor_controller{
     }
 
     bool set_speed(double v){   //set the motor speed to the given value
-
+      return true;
     }
 
     bool engage_motors(bool engage){    //engage or disengage the motor position controller
-
+      return true;
     }
 
     bool enable_watchdog(int time){   //enables the motor controllers internal watchdog
-
+      return true;
     }
 
     bool reset_watchdog(){    //resets the motor controllers internal watchdog. if this is not called within the time specified above, the motors stop and the controller disconnects
-
+      return true;
     }
 
     bool set_controller_parameters(double k_p, double k_i, double k_d){   //sets the parameters for the internal PID controller of the motor position controller
-
+      return true;
     }
 
 
   private:
     bool connected;
-    double speed;
-    double temperature;
-    double current;
 
     cb_ptr speed_cb;
     cb_ptr current_cb;
     cb_ptr temperature_cb;
 
-    void CCONV positionChangeHandler(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered)
+    static void CCONV positionChangeHandler(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered)
     {
-    speed = (((double)positionChange / timeChange) / (ENCODER_RESOLUTION * GEAR_RATIO)) * TIRE_CIRCUMFERENCE * 1000;
+      *((double*)ctx) = (((double)positionChange / timeChange) / (ENCODER_RESOLUTION * GEAR_RATIO)) * TIRE_CIRCUMFERENCE * 1000;
     }
 
-    void CCONV currentChangeHandler(PhidgetCurrentInputHandle ch, void *ctx, double current) {
-      this.current = current;
+    static void CCONV currentChangeHandler(PhidgetCurrentInputHandle ch, void *ctx, double current) {
+      *((double*)ctx) = current;
     }
 
-    void CCONV temperatureChangeHandler(PhidgetTemperatureSensorHandle ch, void *ctx, double temperature) {
-      this.temperature = temperature;
+    static void CCONV temperatureChangeHandler(PhidgetTemperatureSensorHandle ch, void *ctx, double temperature) {
+      *((double*)ctx) = temperature;
     }
 
     bool connect_current_sens()
@@ -639,8 +546,8 @@ class motor_controller{
       else
       {
         ROS_INFO("Connected");
-        PhidgetCurrentInput_setDataInterval(*ch, MOTOR_DATA_INTERVALL);
-        PhidgetCurrentInput_setOnCurrentChangeHandler(ch, currentChangeHandler, NULL);
+        PhidgetCurrentInput_setDataInterval(current_hdl, MOTOR_DATA_INTERVALL);
+        PhidgetCurrentInput_setOnCurrentChangeHandler(current_hdl, currentChangeHandler, &current);
         return true;
       }
     }
@@ -665,7 +572,7 @@ class motor_controller{
       {
         ROS_INFO("Connected");
         PhidgetTemperatureSensor_setDataInterval(temp_hdl, 500);
-        PhidgetTemperatureSensor_setOnTemperatureChangeHandler(ch, temperatureChangeHandler, NULL);
+        PhidgetTemperatureSensor_setOnTemperatureChangeHandler(temp_hdl, temperatureChangeHandler, &temperature);
         return true;
       }
     }
@@ -694,18 +601,18 @@ class motor_controller{
         PhidgetMotorPositionController_setCurrentLimit(ctrl_hdl, MOTOR_CURRENT_LIMIT);
         PhidgetMotorPositionController_setFanMode(ctrl_hdl, FAN_MODE_AUTO);
 
-        PhidgetMotorPositionController_setOnPositionChangeHandler(ctrl_hdl, positionChangeHandler, NULL);
+        PhidgetMotorPositionController_setOnPositionChangeHandler(ctrl_hdl, positionChangeHandler, &speed);
 
         PhidgetMotorPositionController_setKd(ctrl_hdl, K_D);
         PhidgetMotorPositionController_setKi(ctrl_hdl, K_I);
         PhidgetMotorPositionController_setKp(ctrl_hdl, K_P);
         return true;
-      }
+      }PhidgetEncoderHandle,
     }
 
     bool check_connection(){
-
+      return false;
     }
 
 
-}
+};
