@@ -130,6 +130,10 @@ int main(int argc, char **argv)
    * NodeHandle destructed will close down the node.
    */
 
+  ros::init(argc, argv, "motor_controller_node");
+
+  ros::NodeHandle n;
+
   /**
    * The advertise() function is how you tell ROS that you want to
    * publish on a given topic name. This invokes a call to the ROS
@@ -172,10 +176,6 @@ int main(int argc, char **argv)
 
   // Initialize variables and ros publishers and subscribers; create controller handles
     bool ret;
-
-    ros::init(argc, argv, "motor_controller_node");
-
-    ros::NodeHandle n;
 
     pub.temp_l = n.advertise<sensor_msgs::Temperature>("temp_l", 1000);
     pub.temp_r = n.advertise<sensor_msgs::Temperature>("temp_r", 1000);
@@ -262,6 +262,10 @@ int main(int argc, char **argv)
   }
 
   return 0;
+}
+void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg)
+{
+  cmd_vel = *msg;
 }
 
 bool assert_driving_command()
@@ -601,13 +605,13 @@ class motor_controller{
         PhidgetMotorPositionController_setCurrentLimit(ctrl_hdl, MOTOR_CURRENT_LIMIT);
         PhidgetMotorPositionController_setFanMode(ctrl_hdl, FAN_MODE_AUTO);
 
-        PhidgetMotorPositionController_setOnPositionChangeHandler(ctrl_hdl, positionChangeHandler, &speed);
+        //PhidgetMotorPositionController_setOnPositionChangeHandler(ctrl_hdl, positionChangeHandler, &speed);
 
         PhidgetMotorPositionController_setKd(ctrl_hdl, K_D);
         PhidgetMotorPositionController_setKi(ctrl_hdl, K_I);
         PhidgetMotorPositionController_setKp(ctrl_hdl, K_P);
         return true;
-      }PhidgetEncoderHandle,
+      }
     }
 
     bool check_connection(){

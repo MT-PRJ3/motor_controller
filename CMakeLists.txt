@@ -12,12 +12,12 @@ FIND_LIBRARY(LIBPHIDGET22 phidget22 /home/christoph/catkin_ws/src/motor_controll
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  libphidget21
+  #libphidget21
   roscpp
   rospy
   std_msgs
   geometry_msgs
-  phidgets_api
+  #phidgets_api
 )
 
 ## System dependencies are found with CMake's conventions
