@@ -46,22 +46,32 @@
 
 typedef void (*cb_ptr)(double val);
 
+struct mc_config_t
+{
+    int hub_port;
+    int hub_sn;
+    double tire_circumference;
+    double encoder_resolution;
+    double gear_ratio;
+    double acceleration;
+    double current_limit;
+    uint32_t watchdog_time;
+};
+
+
 class Motor_controller
 {
 
 public:
-    int hub_port;
-    int hub_sn;
-    double speed;
-    double temperature;
-    double current;
 
     PhidgetMotorPositionControllerHandle ctrl_hdl;
     PhidgetCurrentInputHandle current_hdl;
     PhidgetTemperatureSensorHandle temp_hdl;
     PhidgetEncoderHandle encoder_hdl;
 
-    Motor_controller(int hub_port, int hub_sn);
+    Motor_controller(mc_config_t config);
+
+    bool connect();
 
     double get_speed();
 
@@ -69,32 +79,42 @@ public:
 
     double get_current();
 
-    bool get_connected();
-
     // void attach_speed_cb(cb_ptr ptr);
 
     // void attach_current_cb(cb_ptr ptr);
 
     // void attach_temperature_cb(cb_ptr ptr);
 
-    bool connect();
+    bool check_connection();
 
     bool set_speed(double v);
 
     bool engage_motors(bool engage);
 
-    bool enable_watchdog(int time);
-
-    bool reset_watchdog();
-
     bool set_controller_parameters(double k_p, double k_i, double k_d);
 
 private:
     bool connected;
+    int hub_port;
+    int hub_sn;
+    double speed;
+    double temperature;
+    double current;
 
     cb_ptr speed_cb;
     cb_ptr current_cb;
     cb_ptr temperature_cb;
+
+    double tire_circumference;
+    double encoder_resolution;
+    double gear_ratio;
+    double acceleration;
+    double current_limit;
+
+    uint32_t watchdog_timer;
+
+    double max_pos; //maximum and minimum positions of the position controller
+    double min_pos;
 
     static void CCONV positionChangeHandler(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered);
 
@@ -109,6 +129,15 @@ private:
     bool connect_position_controller();
 
     bool connect_encoder();
-
-    bool check_connection();
 };
+
+bool assert_driving_command();
+
+void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg);
+
+double calculate_r(double v_lin, double v_ang);
+
+void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l, double *v_r);
+
+void report_device_info(PhidgetHandle handle);
+

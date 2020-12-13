@@ -39,18 +39,6 @@ double v_r_actual;
 
 ros_publisher_t pub;
 
-bool assert_driving_command();
-
-void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg);
-
-double calculate_r(double v_lin, double v_ang);
-
-void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l, double *v_r);
-
-void report_device_info(PhidgetHandle handle);
-
-void publish_sensor_values(ros_publisher_t *pub, PhidgetCurrentInputHandle *ch_current, PhidgetTemperatureSensorHandle *ch_temp, double v_l_actual, double v_r_actual);
-
 /**
  * This tutorial demonstrates simple sending of messages over the ROS system.
  */
@@ -133,8 +121,9 @@ int main(int argc, char **argv)
   pub.speed_r = n.advertise<std_msgs::Float64>("speed_r", 1000);
   ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 1000, cmd_vel_cb);
 
-  Motor_controller controller_l(VINT_SN, left);
-  return controller_l.connect();
+  // Motor_controller controller_l(VINT_SN, left);
+  // return controller_l.connect();
+
   state = connect_controllers;
 
   while (ros::ok())
@@ -353,28 +342,67 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l_setpoint, double *v_r
   //ROS_INFO(" ");
 }
 
-void publish_sensor_values(ros_publisher_t *pub, PhidgetCurrentInputHandle *ch_current, PhidgetTemperatureSensorHandle *ch_temp, double v_l_actual, double v_r_actual)
+//--Implementation of the Motor_controller class functions-----------------------------------------------------------------------------------
+Motor_controller::Motor_controller(mc_config_t config)
 {
-  std_msgs::Float64 current;
-  PhidgetCurrentInput_getCurrent(ch_current[left], &current.data);
-  pub->current_l.publish(current);
+  this->hub_port = config.hub_port;
+  this->hub_sn = config.hub_sn;
+  
+  //Check if the given config values are valid to avoid dividing by 0 etc...
+  if (config.tire_circumference <= 0)
+  {
+    ROS_ERROR("Tire circumference must be greater than 0!");
+  }
+  else
+  {
+    this->tire_circumference = config.tire_circumference;
+  }
 
-  PhidgetCurrentInput_getCurrent(ch_current[right], &current.data);
-  pub->current_r.publish(current);
+  if (config.encoder_resolution <= 0)
+  {
+    ROS_ERROR("encoder resolution must be greater than 0!");
+  }
+  else
+  {
+    this->encoder_resolution = config.encoder_resolution;
+  }
 
-  sensor_msgs::Temperature temp;
+  if (config.gear_ratio <= 0)
+  {
+    ROS_ERROR("gear ratio must be greater than 0!");
+  }
+  else
+  {
+    this->gear_ratio = config.gear_ratio;
+  }
 
-  PhidgetTemperatureSensor_getTemperature(ch_temp[left], &temp.temperature);
-  pub->temp_l.publish(temp);
+  if ((config.acceleration <= 0.1) && (config.acceleration >= 10000000))
+  {
+    ROS_ERROR("Invalid acceleration value");
+  }
+  else
+  {
+    this->acceleration = config.acceleration;
+  }
 
-  PhidgetTemperatureSensor_getTemperature(ch_temp[right], &temp.temperature);
-  pub->temp_r.publish(temp);
-}
+  if ((config.current_limit <= 2.0) && (config.current_limit >= 25.0))
+  {
+    ROS_ERROR("Invalid current limit");
+  }
+  else
+  {
+    this->current_limit = config.current_limit;
+  }
 
-Motor_controller::Motor_controller(int hub_port, int hub_sn)
-{
-  this->hub_port = hub_port;
-  this->hub_sn = hub_sn;
+  if ((config.watchdog_time <= 500) && (config.watchdog_time >= 30000))
+  {
+    ROS_ERROR("Invalid current limit");
+  }
+  else
+  {
+  this->watchdog_timer = config.watchdog_time;
+  }
+
   this->connected = false;
 }
 
@@ -393,9 +421,23 @@ double Motor_controller::get_current()
   return current;
 }
 
-bool Motor_controller::get_connected()
-{ //checks if the motor controller is connected/if the connection was lost
-  return false;
+bool Motor_controller::check_connection()
+{ //checks if the motor controller is connected/if the connection was lost and resets the failsafe timer if not
+  int attached = 0;
+  PhidgetReturnCode ret;
+  ret = Phidget_getAttached((PhidgetHandle)ctrl_hdl, &attached);
+
+  if ((attached != 0) && (ret == EPHIDGET_OK))
+  { // connection ok -> reset failsafe timer
+    PhidgetMotorPositionController_resetFailsafe(ctrl_hdl);
+    connected = true;
+    return true;
+  }
+  else // connection not ok -> return error
+  {
+    connected = false;
+    return false;
+  }
 }
 
 // void Motor_controller::attach_speed_cb(cb_ptr ptr){   //attaches the given callback function to the speed update event (if a speed update event occurs, the given function is called and provoided with the new speed value)
@@ -438,27 +480,66 @@ bool Motor_controller::connect()
 
 bool Motor_controller::set_speed(double v)
 { //set the motor speed to the given value
-  return true;
+  double pos = 0;
+  double speed = 0;
+  PhidgetReturnCode ret;
+
+  // set the direction
+  if (v > 0)
+  {
+    pos = max_pos;
+  }
+  else
+  {
+    pos = min_pos;
+  }
+  PhidgetMotorPositionController_setTargetPosition(ctrl_hdl, pos);
+
+  //convert speed from m/s to encoder steps/s
+  speed = abs((v / tire_circumference) * encoder_resolution * gear_ratio);
+
+  //set the speed
+  ret = PhidgetMotorPositionController_setVelocityLimit(ctrl_hdl, speed);
+  if (ret == EPHIDGET_OK)
+  {
+    return true;
+  }
+  else
+  {
+    ROS_ERROR("set speed for hub port %d failed! error code: 0x%x", hub_port, ret);
+    return false;
+  }
 }
 
 bool Motor_controller::engage_motors(bool engage)
 { //engage or disengage the motor position controller
-  return true;
-}
+  PhidgetReturnCode ret;
 
-bool Motor_controller::enable_watchdog(int time)
-{ //enables the motor controllers internal watchdog
-  return true;
-}
-
-bool Motor_controller::reset_watchdog()
-{ //resets the motor controllers internal watchdog. if this is not called within the time specified above, the motors stop and the controller disconnects
-  return true;
+  ret = PhidgetMotorPositionController_setEngaged(ctrl_hdl, (int)engage);
+  if (ret == EPHIDGET_OK)
+  {
+    return true;
+  }
+  else
+  {
+    ROS_INFO("setEngaged on port %d returned 0x%x", hub_port, ret);
+    return false;
+  }
 }
 
 bool Motor_controller::set_controller_parameters(double k_p, double k_i, double k_d)
 { //sets the parameters for the internal PID controller of the motor position controller
-  return true;
+  if (connected)
+  {
+    PhidgetMotorPositionController_setKd(ctrl_hdl, k_p);
+    PhidgetMotorPositionController_setKi(ctrl_hdl, k_i);
+    PhidgetMotorPositionController_setKp(ctrl_hdl, k_d);
+    return true;
+  }
+  else
+  {
+    return false;
+  }
 }
 
 void CCONV Motor_controller::positionChangeHandler(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered)
@@ -545,14 +626,18 @@ bool Motor_controller::connect_position_controller()
   else
   {
     ROS_INFO("Connected");
-    PhidgetMotorPositionController_setDataInterval(ctrl_hdl, ENCODER_DATA_INTERVALL);
-    PhidgetMotorPositionController_setAcceleration(ctrl_hdl, POSITION_CONTROLLER_ACCELERATION);
-    PhidgetMotorPositionController_setCurrentLimit(ctrl_hdl, MOTOR_CURRENT_LIMIT);
+    PhidgetMotorPositionController_enableFailsafe(ctrl_hdl, watchdog_timer);
+    PhidgetMotorPositionController_setDataInterval(ctrl_hdl, 20); // 20 ms is the lowes data interval
+    PhidgetMotorPositionController_setAcceleration(ctrl_hdl, acceleration);
+    PhidgetMotorPositionController_setCurrentLimit(ctrl_hdl, current_limit);
     PhidgetMotorPositionController_setFanMode(ctrl_hdl, FAN_MODE_AUTO);
 
-    PhidgetMotorPositionController_setKd(ctrl_hdl, K_D);
-    PhidgetMotorPositionController_setKi(ctrl_hdl, K_I);
-    PhidgetMotorPositionController_setKp(ctrl_hdl, K_P);
+    PhidgetMotorPositionController_getMinPosition(ctrl_hdl, &min_pos);
+    PhidgetMotorPositionController_getMaxPosition(ctrl_hdl, &max_pos);
+
+    // PhidgetMotorPositionController_setKd(ctrl_hdl, K_D); //can be set via the specified function
+    // PhidgetMotorPositionController_setKi(ctrl_hdl, K_I);
+    // PhidgetMotorPositionController_setKp(ctrl_hdl, K_P);
     return true;
   }
 }
@@ -577,9 +662,4 @@ bool Motor_controller::connect_encoder()
     PhidgetEncoder_setOnPositionChangeHandler(encoder_hdl, positionChangeHandler, &speed);
     return true;
   }
-}
-
-bool Motor_controller::check_connection()
-{
-  return false;
 }
