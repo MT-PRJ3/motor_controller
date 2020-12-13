@@ -121,6 +121,7 @@ private:
     double gear_ratio;
     double acceleration;
     double current_limit;
+    bool inverted;
 
     uint32_t watchdog_timer;
 
@@ -142,13 +143,11 @@ private:
     bool connect_encoder();
 };
 
-bool assert_driving_command();
+bool robot_ok();
 
 void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg);
 
 double calculate_r(double v_lin, double v_ang);
 
 void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l, double *v_r);
-
-void report_device_info(PhidgetHandle handle);
 

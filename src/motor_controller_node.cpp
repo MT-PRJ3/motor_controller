@@ -90,18 +90,17 @@ int main(int argc, char **argv)
   state = connect_controllers;
 
   mc_config_t config = {
-    .hub_port = left,
-    .hub_sn = VINT_SN,
-    .tire_circumference = TIRE_CIRCUMFERENCE,
-    .encoder_resolution = ENCODER_RESOLUTION,
-    .gear_ratio = GEAR_RATIO,
-    .acceleration = MOTOR_ACCELERATION,
-    .current_limit = MOTOR_CURRENT_LIMIT,
-    .watchdog_time = 500,
-    .invert_direction = false
-  };
+      .hub_port = left,
+      .hub_sn = VINT_SN,
+      .tire_circumference = TIRE_CIRCUMFERENCE,
+      .encoder_resolution = ENCODER_RESOLUTION,
+      .gear_ratio = GEAR_RATIO,
+      .acceleration = MOTOR_ACCELERATION,
+      .current_limit = MOTOR_CURRENT_LIMIT,
+      .watchdog_time = 500,
+      .invert_direction = false};
 
-  Motor_controller* controller[2];
+  Motor_controller *controller[2];
 
   controller[left] = new Motor_controller(config);
 
@@ -110,9 +109,8 @@ int main(int argc, char **argv)
 
   controller[right] = new Motor_controller(config);
 
-  if(!controller[left]->connect()){
-    ROS_ERROR("CONNECTION FAILED");
-  }
+  double v_l;
+  double v_r;
 
   while (ros::ok())
   {
@@ -123,70 +121,123 @@ int main(int argc, char **argv)
     {
 
     case connect_controllers: // connect and configure all the controller devices
-
+      if (!controller[left]->connect())
+      {
+        ROS_ERROR("connection to the left controller failed");
+      }
+      else
+      {
+        controller[left]->report_device_info();
+        if (!controller[right]->connect())
+        {
+          ROS_ERROR("connection to the right controller failed");
+        }
+        else
+        {
+          controller[right]->report_device_info();
+          state = wait_for_rtd;
+        }
+      }
       break;
 
     case wait_for_rtd: // check if the robot is OK and wait for the ready to drive command
+      if (controller[left]->check_connection() && controller[right]->check_connection())
+      {
+        if (false)
+        {
+          state = drive;
+          controller[left]->engage_motors(true);
+          controller[right]->engage_motors(true);
+        }
+      }
+      else
+      {
+        ROS_ERROR("CONNECTION LOST!");
+        state = connect_controllers;
+      }
 
       break;
 
     case drive: // drive the robot
+      if (controller[left]->check_connection() && controller[right]->check_connection())
+      {
+        if (robot_ok())
+        {
+          calculate_v(cmd_vel, &v_l, &v_r);
+          controller[left]->set_speed(v_l);
+          controller[right]->set_speed(v_r);
+        }
+        else
+        {
+          controller[left]->set_speed(0);
+          controller[right]->set_speed(0);
+          state = brake;
+          ROS_WARN("Robot not ok; trying to brake");
+        }
+      }
+      else
+      {
+        ROS_ERROR("CONNECTION LOST!");
+        state = connect_controllers;
+      }
 
       break;
 
     case brake: //brake to a standstill (preferrably fast)
-
+      if (controller[left]->check_connection() && controller[right]->check_connection())
+      {
+        if ((controller[left]->get_speed() <= 0.1) && (controller[right]->get_speed() <= 0.1))
+        {
+          controller[left]->engage_motors(false);
+          controller[right]->engage_motors(false);
+          state = disengaged;
+          ROS_INFO("Robot standing; disengaging motors");
+        }
+      }
+      else
+      {
+        ROS_ERROR("CONNECTION LOST!");
+        state = connect_controllers;
+      }
       break;
 
     case disengaged: // disengage the controll loop of the controllers to allow tire movements
-
+      if (controller[left]->check_connection() && controller[right]->check_connection())
+      {
+        if(robot_ok()){
+          state = wait_for_rtd;
+          ROS_INFO("Failstate resolved; waiting for rtd");
+        }
+      }
+      else
+      {
+        ROS_ERROR("CONNECTION LOST!");
+        state = connect_controllers;
+      }      
       break;
 
     case deinit: // close all connections and shutdown
 
-      //break;
+      delete controller[left];
+      delete controller[right];
+      return -1;
 
     default:
 
       break;
     }
-    if (assert_driving_command())
-    {
-      // calculate_v(cmd_vel, &v_l_setpoint, &v_r_setpoint); // calculate the setpoint speeds for both wheels
-
-      // get_speed(encoder[left], &v_l_actual); // caculate the actual speed of the wheels
-      // get_speed(encoder[right], &v_r_actual);
-
-      // calculate_duty_cycle(&pid[left], &dc_l, v_l_setpoint, v_l_actual, 24);  // calculate the duty cycle using a simple P controller
-      // calculate_duty_cycle(&pid[right], &dc_r, v_r_setpoint, v_r_actual, 24); // with a feedforward component
-
-      // set_duty_cycle(mc_handles[left], dc_l); // apply the calculated duty cycle values
-      // set_duty_cycle(mc_handles[right], dc_r);
-    }
-    else
-    {
-    }
-
-    //publish_sensor_values(&pub, ch_current, ch_tmp, v_l_actual, v_r_actual);
-
-    //PhidgetDCMotor_setTargetVelocity(ch, cmd_vel.linear.x);
-
-    //ROS_INFO("%s", msg.data.c_str());
-    // ROS_INFO("Temperatur: %g", temp);
-    /**
-     * The publish() function is how you send messages. The parameter
-     * is the message object. The type of this object must agree with the type
-     * given as a template parameter to the advertise<>() call, as was done
-     * in the constructor above.
-     */
 
     ros::spinOnce();
 
     loop_rate.sleep();
   }
-
   return 0;
 }
+
+bool robot_ok(){
+  return false;
+}
+
 void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg)
 {
   cmd_vel = *msg;
@@ -196,8 +247,6 @@ bool assert_driving_command()
 {
   return true;
 }
-
-
 
 double calculate_r(double v_lin, double v_ang)
 {
@@ -443,17 +492,6 @@ void Motor_controller::report_device_info()
 
   ROS_INFO("device %s connected to port %d (VINT SN: %d) ", name, port, SN);
 }
-// void Motor_controller::attach_speed_cb(cb_ptr ptr){   //attaches the given callback function to the speed update event (if a speed update event occurs, the given function is called and provoided with the new speed value)
-//   speed_cb = ptr;
-// }
-
-// void Motor_controller::attach_current_cb(cb_ptr ptr){   //attaches the given callback function to the current update event (if a current update event occurs, the given function is called and provoided with the new current value)
-//   current_cb = ptr;
-// }
-
-// void Motor_controller::attach_temperature_cb(cb_ptr ptr){   //attaches the given callback function to the temperature update event (if a temperature update event occurs, the given function is called and provoided with the new temperature value)
-//   temperature_cb = ptr;
-// }
 
 bool Motor_controller::connect()
 { //connect to all relevant channels on the controller
@@ -487,10 +525,11 @@ bool Motor_controller::set_speed(double v)
   double speed = 0;
   PhidgetReturnCode ret;
 
-  if(inverted){
+  if (inverted)
+  {
     v = -v;
   }
-  
+
   // set the direction
   if (v > 0)
   {
