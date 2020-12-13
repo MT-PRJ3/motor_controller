@@ -56,6 +56,13 @@ struct mc_config_t
     double acceleration;
     double current_limit;
     uint32_t watchdog_time;
+    bool invert_direction;
+};
+
+enum controller_side_t
+{
+  left = 0x00,
+  right = 0x01
 };
 
 
@@ -70,6 +77,8 @@ public:
     PhidgetEncoderHandle encoder_hdl;
 
     Motor_controller(mc_config_t config);
+
+    ~Motor_controller();
 
     bool connect();
 
@@ -92,6 +101,8 @@ public:
     bool engage_motors(bool engage);
 
     bool set_controller_parameters(double k_p, double k_i, double k_d);
+
+    void report_device_info();
 
 private:
     bool connected;

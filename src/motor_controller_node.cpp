@@ -1,18 +1,5 @@
 #include "motor_controller/motor_controller_node.h"
 
-typedef struct
-{
-  double dt;
-  double integral;
-  double last_error;
-} mc_pid_t;
-
-enum controller_side_t
-{
-  left = 0x00,
-  right = 0x01
-};
-
 enum mc_state_t
 {
   init = 0x00,
@@ -33,9 +20,6 @@ typedef struct
   ros::Publisher speed_l;
   ros::Publisher speed_r;
 } ros_publisher_t;
-
-double v_l_actual;
-double v_r_actual;
 
 ros_publisher_t pub;
 
@@ -90,28 +74,7 @@ int main(int argc, char **argv)
 
   ros::Rate loop_rate(FREQUENCY);
 
-  std_msgs::String msg;
-
-  double v_l_setpoint;
-  double v_r_setpoint;
-  double dc_l;
-  double dc_r;
-
-  v_l_actual = 0;
-  v_r_actual = 0;
-
-  mc_pid_t pid[2];
-
-  pid[left].dt = 1 / FREQUENCY;
-  pid[left].integral = 0;
-  pid[left].last_error = 0;
-
-  pid[right].dt = 1 / FREQUENCY;
-  pid[right].integral = 0;
-  pid[right].last_error = 0;
-
   // Initialize variables and ros publishers and subscribers; create controller handles
-  bool ret;
 
   pub.temp_l = n.advertise<sensor_msgs::Temperature>("temp_l", 1000);
   pub.temp_r = n.advertise<sensor_msgs::Temperature>("temp_r", 1000);
@@ -125,6 +88,31 @@ int main(int argc, char **argv)
   // return controller_l.connect();
 
   state = connect_controllers;
+
+  mc_config_t config = {
+    .hub_port = left,
+    .hub_sn = VINT_SN,
+    .tire_circumference = TIRE_CIRCUMFERENCE,
+    .encoder_resolution = ENCODER_RESOLUTION,
+    .gear_ratio = GEAR_RATIO,
+    .acceleration = MOTOR_ACCELERATION,
+    .current_limit = MOTOR_CURRENT_LIMIT,
+    .watchdog_time = 500,
+    .invert_direction = false
+  };
+
+  Motor_controller* controller[2];
+
+  controller[left] = new Motor_controller(config);
+
+  config.invert_direction = true;
+  config.hub_port = right;
+
+  controller[right] = new Motor_controller(config);
+
+  if(!controller[left]->connect()){
+    ROS_ERROR("CONNECTION FAILED");
+  }
 
   while (ros::ok())
   {
@@ -164,7 +152,7 @@ int main(int argc, char **argv)
     }
     if (assert_driving_command())
     {
-      calculate_v(cmd_vel, &v_l_setpoint, &v_r_setpoint); // calculate the setpoint speeds for both wheels
+      // calculate_v(cmd_vel, &v_l_setpoint, &v_r_setpoint); // calculate the setpoint speeds for both wheels
 
       // get_speed(encoder[left], &v_l_actual); // caculate the actual speed of the wheels
       // get_speed(encoder[right], &v_r_actual);
@@ -209,19 +197,7 @@ bool assert_driving_command()
   return true;
 }
 
-void report_device_info(PhidgetHandle handle)
-{
-  const char *name;
-  int32_t deviceID;
-  int32_t SN;
-  int32_t port;
 
-  Phidget_getDeviceName(handle, &name);
-  Phidget_getDeviceSerialNumber(handle, &SN);
-  Phidget_getHubPort(handle, &port);
-
-  ROS_INFO("device %s connected to port %d (VINT SN: %d) ", name, port, SN);
-}
 
 double calculate_r(double v_lin, double v_ang)
 {
@@ -347,7 +323,8 @@ Motor_controller::Motor_controller(mc_config_t config)
 {
   this->hub_port = config.hub_port;
   this->hub_sn = config.hub_sn;
-  
+  this->inverted = config.invert_direction;
+
   //Check if the given config values are valid to avoid dividing by 0 etc...
   if (config.tire_circumference <= 0)
   {
@@ -400,10 +377,23 @@ Motor_controller::Motor_controller(mc_config_t config)
   }
   else
   {
-  this->watchdog_timer = config.watchdog_time;
+    this->watchdog_timer = config.watchdog_time;
   }
 
   this->connected = false;
+
+  PhidgetCurrentInput_create(&current_hdl);
+  PhidgetTemperatureSensor_create(&temp_hdl);
+  PhidgetMotorPositionController_create(&ctrl_hdl);
+  PhidgetEncoder_create(&encoder_hdl);
+}
+
+Motor_controller::~Motor_controller()
+{
+  PhidgetMotorPositionController_delete(&ctrl_hdl);
+  PhidgetEncoder_delete(&encoder_hdl);
+  PhidgetTemperatureSensor_delete(&temp_hdl);
+  PhidgetCurrentInput_delete(&current_hdl);
 }
 
 double Motor_controller::get_speed()
@@ -440,6 +430,19 @@ bool Motor_controller::check_connection()
   }
 }
 
+void Motor_controller::report_device_info()
+{
+  const char *name;
+  int32_t deviceID;
+  int32_t SN;
+  int32_t port;
+
+  Phidget_getDeviceName((PhidgetHandle)ctrl_hdl, &name);
+  Phidget_getDeviceSerialNumber((PhidgetHandle)ctrl_hdl, &SN);
+  Phidget_getHubPort((PhidgetHandle)ctrl_hdl, &port);
+
+  ROS_INFO("device %s connected to port %d (VINT SN: %d) ", name, port, SN);
+}
 // void Motor_controller::attach_speed_cb(cb_ptr ptr){   //attaches the given callback function to the speed update event (if a speed update event occurs, the given function is called and provoided with the new speed value)
 //   speed_cb = ptr;
 // }
@@ -484,6 +487,10 @@ bool Motor_controller::set_speed(double v)
   double speed = 0;
   PhidgetReturnCode ret;
 
+  if(inverted){
+    v = -v;
+  }
+  
   // set the direction
   if (v > 0)
   {
@@ -560,7 +567,6 @@ void CCONV Motor_controller::temperatureChangeHandler(PhidgetTemperatureSensorHa
 bool Motor_controller::connect_current_sens()
 {
   PhidgetReturnCode res;
-  PhidgetCurrentInput_create(&current_hdl);
 
   Phidget_setDeviceSerialNumber((PhidgetHandle)current_hdl, hub_sn);
   Phidget_setHubPort((PhidgetHandle)current_hdl, hub_port);
@@ -585,7 +591,6 @@ bool Motor_controller::connect_current_sens()
 bool Motor_controller::connect_temp_sens()
 {
   PhidgetReturnCode res;
-  PhidgetTemperatureSensor_create(&temp_hdl);
 
   Phidget_setDeviceSerialNumber((PhidgetHandle)temp_hdl, hub_sn);
   Phidget_setHubPort((PhidgetHandle)temp_hdl, hub_port);
@@ -610,7 +615,6 @@ bool Motor_controller::connect_temp_sens()
 bool Motor_controller::connect_position_controller()
 {
   PhidgetReturnCode res;
-  PhidgetMotorPositionController_create(&ctrl_hdl);
 
   Phidget_setDeviceSerialNumber((PhidgetHandle)ctrl_hdl, hub_sn);
   Phidget_setHubPort((PhidgetHandle)ctrl_hdl, hub_port);
@@ -645,7 +649,7 @@ bool Motor_controller::connect_position_controller()
 bool Motor_controller::connect_encoder()
 {
   PhidgetReturnCode res;
-  PhidgetEncoder_create(&encoder_hdl);
+
   Phidget_setDeviceSerialNumber((PhidgetHandle)encoder_hdl, hub_sn);
   Phidget_setHubPort((PhidgetHandle)encoder_hdl, hub_port);
   ROS_INFO("Connecting to encoder...");
