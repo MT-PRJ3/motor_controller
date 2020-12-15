@@ -3,7 +3,7 @@ project(motor_controller)
 
 # set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I/home/christoph/catkin_ws/src/motor_controller/libphidget22")
 
-FIND_LIBRARY(LIBPHIDGET22 phidget22 /home/christoph/catkin_ws/src/motor_controller/libphidget22)
+#FIND_LIBRARY(LIBPHIDGET22 phidget22 /home/christoph/catkin_ws/src/motor_controller/libphidget22)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
