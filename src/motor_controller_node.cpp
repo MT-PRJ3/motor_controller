@@ -95,7 +95,7 @@ int main(int argc, char **argv)
       .tire_circumference = TIRE_CIRCUMFERENCE,
       .encoder_resolution = ENCODER_RESOLUTION,
       .gear_ratio = GEAR_RATIO,
-      .acceleration = MOTOR_ACCELERATION,
+      .acceleration = POSITION_CONTROLLER_ACCELERATION,
       .current_limit = MOTOR_CURRENT_LIMIT,
       .watchdog_time = 500,
       .invert_direction = false};
@@ -143,7 +143,7 @@ int main(int argc, char **argv)
     case wait_for_rtd: // check if the robot is OK and wait for the ready to drive command
       if (controller[left]->check_connection() && controller[right]->check_connection())
       {
-        if (false)
+        if (true)
         {
           state = drive;
           controller[left]->engage_motors(true);
@@ -235,7 +235,7 @@ int main(int argc, char **argv)
 }
 
 bool robot_ok(){
-  return false;
+  return true;
 }
 
 void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg)
@@ -468,7 +468,7 @@ bool Motor_controller::check_connection()
 
   if ((attached != 0) && (ret == EPHIDGET_OK))
   { // connection ok -> reset failsafe timer
-    PhidgetMotorPositionController_resetFailsafe(ctrl_hdl);
+    // PhidgetMotorPositionController_resetFailsafe(ctrl_hdl);
     connected = true;
     return true;
   }
@@ -669,7 +669,7 @@ bool Motor_controller::connect_position_controller()
   else
   {
     ROS_INFO("Connected");
-    PhidgetMotorPositionController_enableFailsafe(ctrl_hdl, watchdog_timer);
+    // PhidgetMotorPositionController_enableFailsafe(ctrl_hdl, watchdog_timer);
     PhidgetMotorPositionController_setDataInterval(ctrl_hdl, 20); // 20 ms is the lowes data interval
     PhidgetMotorPositionController_setAcceleration(ctrl_hdl, acceleration);
     PhidgetMotorPositionController_setCurrentLimit(ctrl_hdl, current_limit);

@@ -37,7 +37,7 @@
 #define POSITION_CONTROLLER_DATA_INTERVAL 20          // [ms]
 #define POSITION_CONTROLLER_FAILSAFE_TIMER 500        // [ms]
 #define POSITION_CONTROLLER_CURRENT_REGULATOR_GAIN 10 // [?]
-#define POSITION_CONTROLLER_ACCELERATION 100          // [?]
+#define POSITION_CONTROLLER_ACCELERATION 50000          // [?]
 //#define POSITION_CONTROLLER_RESCALE_FACTOR 5400 // encoder steps per revolution
 
 #define K_P 0.5 // P component of the PID     I dont know what im doing, should probably be changed!
