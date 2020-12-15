@@ -137,6 +137,32 @@ int main(int argc, char **argv)
   return controller_l.connect();
   state = connect_controllers;
 
+<<<<<<< Updated upstream
+=======
+  mc_config_t config = {
+      .hub_port = left,
+      .hub_sn = VINT_SN,
+      .tire_circumference = TIRE_CIRCUMFERENCE,
+      .encoder_resolution = ENCODER_RESOLUTION,
+      .gear_ratio = GEAR_RATIO,
+      .acceleration = POSITION_CONTROLLER_ACCELERATION,
+      .current_limit = MOTOR_CURRENT_LIMIT,
+      .watchdog_time = 500,
+      .invert_direction = false};
+
+  Motor_controller *controller[2];
+
+  controller[left] = new Motor_controller(config);
+
+  config.invert_direction = true;
+  config.hub_port = right;
+
+  controller[right] = new Motor_controller(config);
+
+  double v_l;
+  double v_r;
+
+>>>>>>> Stashed changes
   while (ros::ok())
   {
     /**
@@ -150,15 +176,77 @@ int main(int argc, char **argv)
       break;
 
     case wait_for_rtd: // check if the robot is OK and wait for the ready to drive command
+<<<<<<< Updated upstream
+=======
+    ROS_INFO("entered wait for rtd state");
+      if (controller[left]->check_connection() && controller[right]->check_connection())
+      {
+        ROS_INFO("Connection ok");
+        if (true)
+        {
+          state = drive;
+          controller[left]->engage_motors(true);
+          controller[right]->engage_motors(true);
+        }
+      }
+      else
+      {
+        ROS_ERROR("CONNECTION LOST!");
+        state = connect_controllers;
+      }
+>>>>>>> Stashed changes
 
       break;
 
     case drive: // drive the robot
+<<<<<<< Updated upstream
+=======
+      if (controller[left]->check_connection() && controller[right]->check_connection())
+      {
+        if (robot_ok())
+        {
+          calculate_v(cmd_vel, &v_l, &v_r);
+          ROS_INFO("speed l: %g, speed r: %g", v_l, v_r);
+          controller[left]->set_speed(v_l);
+          controller[right]->set_speed(v_r);
+        }
+        else
+        {
+          controller[left]->set_speed(0);
+          controller[right]->set_speed(0);
+          state = brake;
+          ROS_WARN("Robot not ok; trying to brake");
+        }
+      }
+      else
+      {
+        ROS_ERROR("CONNECTION LOST!");
+        state = connect_controllers;
+      }
+>>>>>>> Stashed changes
 
       break;
 
     case brake: //brake to a standstill (preferrably fast)
+<<<<<<< Updated upstream
 
+=======
+      if (controller[left]->check_connection() && controller[right]->check_connection())
+      {
+        if ((controller[left]->get_speed() <= 0.05) && (controller[right]->get_speed() <= 0.05))
+        {
+          controller[left]->engage_motors(false);
+          controller[right]->engage_motors(false);
+          state = disengaged;
+          ROS_INFO("Robot standing; disengaging motors");
+        }
+      }
+      else
+      {
+        ROS_ERROR("CONNECTION LOST!");
+        state = connect_controllers;
+      }
+>>>>>>> Stashed changes
       break;
 
     case disengaged: // disengage the controll loop of the controllers to allow tire movements
@@ -208,7 +296,12 @@ int main(int argc, char **argv)
     loop_rate.sleep();
   }
 
+<<<<<<< Updated upstream
   return 0;
+=======
+bool robot_ok(){
+  return true;
+>>>>>>> Stashed changes
 }
 void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg)
 {
@@ -373,9 +466,17 @@ void publish_sensor_values(ros_publisher_t *pub, PhidgetCurrentInputHandle *ch_c
 
 Motor_controller::Motor_controller(int hub_port, int hub_sn)
 {
+<<<<<<< Updated upstream
   this->hub_port = hub_port;
   this->hub_sn = hub_sn;
   this->connected = false;
+=======
+  PhidgetMotorPositionController_delete(&ctrl_hdl);
+  PhidgetEncoder_delete(&encoder_hdl);
+  PhidgetTemperatureSensor_delete(&temp_hdl);
+  PhidgetCurrentInput_delete(&current_hdl);
+  ROS_INFO("Connections closed");
+>>>>>>> Stashed changes
 }
 
 double Motor_controller::get_speed()
@@ -393,9 +494,32 @@ double Motor_controller::get_current()
   return current;
 }
 
+<<<<<<< Updated upstream
 bool Motor_controller::get_connected()
 { //checks if the motor controller is connected/if the connection was lost
   return false;
+=======
+bool Motor_controller::check_connection()
+{ //checks if the motor controller is connected/if the connection was lost and resets the failsafe timer if not
+  int attached;
+  PhidgetReturnCode ret;
+  //ROS_INFO("checking connection...");
+  ret = Phidget_getAttached((PhidgetHandle)ctrl_hdl, &attached);
+  //ROS_INFO("Checking connection; return value: 0x%x", ret);
+  if ((attached != 0) && (ret == EPHIDGET_OK))
+  { // connection ok -> reset failsafe timer
+  //ROS_INFO("Trying to reset failsafe timer");
+    //PhidgetMotorPositionController_resetFailsafe(ctrl_hdl);
+    //ROS_INFO("failsafe timer reset");
+    connected = true;
+    return true;
+  }
+  else // connection not ok -> return error
+  {
+    connected = false;
+    return false;
+  }
+>>>>>>> Stashed changes
 }
 
 // void Motor_controller::attach_speed_cb(cb_ptr ptr){   //attaches the given callback function to the speed update event (if a speed update event occurs, the given function is called and provoided with the new speed value)
@@ -412,22 +536,23 @@ bool Motor_controller::get_connected()
 
 bool Motor_controller::connect()
 { //connect to all relevant channels on the controller
+
+  // if (!connect_current_sens())
+  // {
+  //   return false;
+  // }
+
+  // if (!connect_temp_sens())
+  // {
+  //   return false;
+  // }
+
+  // if (!connect_encoder())
+  // {
+  //   return false;
+  // }
+
   if (!connect_position_controller())
-  {
-    return false;
-  }
-
-  if (!connect_current_sens())
-  {
-    return false;
-  }
-
-  if (!connect_temp_sens())
-  {
-    return false;
-  }
-
-  if (!connect_encoder())
   {
     return false;
   }
@@ -438,6 +563,54 @@ bool Motor_controller::connect()
 
 bool Motor_controller::set_speed(double v)
 { //set the motor speed to the given value
+<<<<<<< Updated upstream
+=======
+  double pos = 0;
+  double speed = 0;
+  PhidgetReturnCode ret = EPHIDGET_OK;
+
+  if (inverted)
+  {
+    v = -v;
+  }
+
+  // set the direction
+  if (v > 0)
+  {
+   // pos = max_pos-10;
+   pos = max_pos;
+  }
+  else
+  {
+   // pos = min_pos+10;
+   pos = min_pos;
+  }
+
+  //convert speed from m/s to encoder steps/s
+  speed = abs((v / tire_circumference) * encoder_resolution * gear_ratio);
+  ROS_INFO("Controller nr %d setting speed to %g and position to %g", hub_port, speed, pos);
+  //set the speed
+  ret = PhidgetMotorPositionController_setVelocityLimit(ctrl_hdl, speed);
+  if (ret == EPHIDGET_OK)
+  {
+    ROS_INFO("set speed ok");
+    //return true;
+  }
+  else
+  {
+    ROS_ERROR("set speed for hub port %d failed! error code: 0x%x", hub_port, ret);
+    //return false;
+  }
+  PhidgetMotorPositionController_setTargetPosition_async(ctrl_hdl, pos, NULL, NULL);
+  ROS_INFO("set position returned 0x%x", ret);
+  
+  ret = PhidgetMotorPositionController_getTargetPosition(ctrl_hdl, &pos);
+  ROS_INFO("get TargetPosition returned %g", pos);
+  ret = PhidgetMotorPositionController_getVelocityLimit(ctrl_hdl, &pos);
+  ROS_INFO("get VelocityLimit returned %g", pos);
+  ret = PhidgetMotorPositionController_getPosition(ctrl_hdl, &pos);
+  ROS_INFO("get position returned %g", pos);
+>>>>>>> Stashed changes
   return true;
 }
 
@@ -458,7 +631,31 @@ bool Motor_controller::reset_watchdog()
 
 bool Motor_controller::set_controller_parameters(double k_p, double k_i, double k_d)
 { //sets the parameters for the internal PID controller of the motor position controller
+<<<<<<< Updated upstream
   return true;
+=======
+  if (connected)
+  {
+    PhidgetMotorPositionController_setKd(ctrl_hdl, k_p);
+    PhidgetMotorPositionController_setKi(ctrl_hdl, k_i);
+    PhidgetMotorPositionController_setKp(ctrl_hdl, k_d);
+
+    double val;
+    PhidgetMotorPositionController_getKp(ctrl_hdl, &val);
+    ROS_INFO("set kp: %g", val);
+
+    PhidgetMotorPositionController_getKi(ctrl_hdl, &val);
+    ROS_INFO("set ki: %g", val);
+
+    PhidgetMotorPositionController_getKd(ctrl_hdl, &val);
+    ROS_INFO("set kd: %g", val);
+    return true;
+  }
+  else
+  {
+    return false;
+  }
+>>>>>>> Stashed changes
 }
 
 void CCONV Motor_controller::positionChangeHandler(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered)
@@ -528,8 +725,12 @@ bool Motor_controller::connect_temp_sens()
 
 bool Motor_controller::connect_position_controller()
 {
+<<<<<<< Updated upstream
   PhidgetReturnCode res;
   PhidgetMotorPositionController_create(&ctrl_hdl);
+=======
+  int res;
+>>>>>>> Stashed changes
 
   Phidget_setDeviceSerialNumber((PhidgetHandle)ctrl_hdl, hub_sn);
   Phidget_setHubPort((PhidgetHandle)ctrl_hdl, hub_port);
@@ -544,7 +745,9 @@ bool Motor_controller::connect_position_controller()
   }
   else
   {
+    
     ROS_INFO("Connected");
+<<<<<<< Updated upstream
     PhidgetMotorPositionController_setDataInterval(ctrl_hdl, ENCODER_DATA_INTERVALL);
     PhidgetMotorPositionController_setAcceleration(ctrl_hdl, POSITION_CONTROLLER_ACCELERATION);
     PhidgetMotorPositionController_setCurrentLimit(ctrl_hdl, MOTOR_CURRENT_LIMIT);
@@ -553,6 +756,21 @@ bool Motor_controller::connect_position_controller()
     PhidgetMotorPositionController_setKd(ctrl_hdl, K_D);
     PhidgetMotorPositionController_setKi(ctrl_hdl, K_I);
     PhidgetMotorPositionController_setKp(ctrl_hdl, K_P);
+=======
+    //PhidgetMotorPositionController_enableFailsafe(ctrl_hdl, watchdog_timer);
+    res = PhidgetMotorPositionController_setDataInterval(ctrl_hdl, 100); // 20 ms is the lowes data interval
+    res += PhidgetMotorPositionController_setAcceleration(ctrl_hdl, 1000000);
+    res += PhidgetMotorPositionController_setCurrentLimit(ctrl_hdl, 8);
+    res += PhidgetMotorPositionController_setFanMode(ctrl_hdl, FAN_MODE_ON);
+
+    res += PhidgetMotorPositionController_getMinPosition(ctrl_hdl, &min_pos);
+    res += PhidgetMotorPositionController_getMaxPosition(ctrl_hdl, &max_pos);
+    //this->set_controller_parameters(K_P, K_I, K_D);
+    ROS_INFO("Configuring done; value: %d", res);
+    // PhidgetMotorPositionController_setKd(ctrl_hdl, K_D); //can be set via the specified function
+    // PhidgetMotorPositionController_setKi(ctrl_hdl, K_I);
+    // PhidgetMotorPositionController_setKp(ctrl_hdl, K_P);
+>>>>>>> Stashed changes
     return true;
   }
 }

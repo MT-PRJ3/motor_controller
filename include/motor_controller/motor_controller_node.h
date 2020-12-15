@@ -30,18 +30,18 @@
 #define MOTOR_ACCELERATION 1.0     // Duty cycles/s [0.1:100]
 #define MOTOR_BRAKING_STRENGTH 1.0 // Braking strength if the set velocity is 0 [0:1.0]
 
-#define MOTOR_CURRENT_LIMIT 25     // [A]  [2:25]
+#define MOTOR_CURRENT_LIMIT 8     // [A]  [2:25]
 #define MOTOR_DATA_INTERVALL 100   //data interval in ms [100:60000]
 #define ENCODER_DATA_INTERVALL 100 //data interval in ms [100:60000]
 
-#define POSITION_CONTROLLER_DATA_INTERVAL 20          // [ms]
+#define POSITION_CONTROLLER_DATA_INTERVAL 100          // [ms]
 #define POSITION_CONTROLLER_FAILSAFE_TIMER 500        // [ms]
-#define POSITION_CONTROLLER_CURRENT_REGULATOR_GAIN 10 // [?]
-#define POSITION_CONTROLLER_ACCELERATION 100          // [?]
+#define POSITION_CONTROLLER_CURRENT_REGULATOR_GAIN 100 // [?]
+#define POSITION_CONTROLLER_ACCELERATION 1000000         // [?]
 //#define POSITION_CONTROLLER_RESCALE_FACTOR 5400 // encoder steps per revolution
 
-#define K_P 0.5 // P component of the PID     I dont know what im doing, should probably be changed!
-#define K_I 1   // I component of the PID
+#define K_P 100000 // P component of the PID     I dont know what im doing, should probably be changed!
+#define K_I 0   // I component of the PID
 #define K_D 0   // D component of the PID
 
 typedef void (*cb_ptr)(double val);
