@@ -166,6 +166,10 @@ int main(int argc, char **argv)
           calculate_v(cmd_vel, &v_l, &v_r);
           controller[left]->set_speed(v_l);
           controller[right]->set_speed(v_r);
+          ROS_INFO("speeds:");
+          ROS_INFO("Speed left: %g", controller[left]->get_speed());
+          ROS_INFO("Speed right: %g", controller[right]->get_speed());
+
         }
         else
         {
