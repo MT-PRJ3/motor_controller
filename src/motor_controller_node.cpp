@@ -272,45 +272,13 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l_setpoint, double *v_r
   if (cmd_vel.linear.x != 0)
   {
     state = state + 0x01;
-
-    if (abs(cmd_vel.linear.x) > V_LIN_MAX)
-    { // Limit maximum linear speed
-      if (cmd_vel.linear.x > 0)
-      {
-        v_lin = V_LIN_MAX;
-      }
-      else
-      {
-        v_lin = -V_LIN_MAX;
-      }
-      ROS_INFO("Linear speed exceeds limits -> Reduced speed from %g to %g!", cmd_vel.linear.x, v_lin);
-    }
-    else
-    {
-      v_lin = cmd_vel.linear.x;
-    }
+    v_lin = cmd_vel.linear.x;
   }
 
   if (cmd_vel.angular.z != 0)
   {
     state = state + 0x02;
-
-    if (abs(cmd_vel.angular.z) > V_ANG_MAX)
-    { // Limit maximum angular speed
-      if (cmd_vel.angular.z > 0)
-      {
-        v_ang = V_ANG_MAX;
-      }
-      else
-      {
-        v_ang = -V_ANG_MAX;
-      }
-      ROS_INFO("Angular speed exceeds limits -> Reduced speed from %g to %g!", cmd_vel.angular.z, v_ang);
-    }
-    else
-    {
-      v_ang = cmd_vel.angular.z;
-    }
+    v_ang = cmd_vel.angular.z;
   }
 
   switch (state)
@@ -322,12 +290,38 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l_setpoint, double *v_r
     break;
 
   case 1: // v_ang = 0 -> only linear motion
+  
+    if (v_lin > V_LIN_MAX)
+    { // Limit maximum linear speed
+      if (v_lin > 0)
+      {
+        v_lin = V_LIN_MAX;
+      }
+      else
+      {
+        v_lin = -V_LIN_MAX;
+      }
+      ROS_INFO("Linear speed exceeds limits -> Reduced speed from %g to %g!", cmd_vel.linear.x, v_lin);
+    }
+
     v_l = v_lin;
     v_r = v_lin;
     break;
 
   case 2: // v_lin = 0 -> only angular motion
   {
+    if (v_ang > V_ANG_MAX)
+    { // Limit maximum angular speed
+      if (v_ang > 0)
+      {
+        v_ang = V_ANG_MAX;
+      }
+      else
+      {
+        v_ang = -V_ANG_MAX;
+      }
+      ROS_INFO("Angular speed exceeds limits -> Reduced speed from %g to %g!", cmd_vel.angular.z, v_ang);
+    }
     double d_v_ang = v_ang * AXLE_WIDTH; // delta v in [m/s]
 
     v_l = d_v_ang / 2;
@@ -338,6 +332,19 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l_setpoint, double *v_r
   case 3: // v_lin and v_ang != 0 -> make sure the robot doesnt tip over
   {
     double r = calculate_r(v_lin, v_ang);
+
+    if (v_lin > V_LIN_MAX)
+    { // Limit maximum linear speed
+      if (v_lin > 0)
+      {
+        v_lin = V_LIN_MAX;
+      }
+      else
+      {
+        v_lin = -V_LIN_MAX;
+      }
+      ROS_INFO("Linear speed exceeds limits -> Reduced speed from %g to %g!", cmd_vel.linear.x, v_lin);
+    }
 
     if (abs(v_lin * v_lin / r) > A_Y_MAX)
     { // calculate the lateral acceleration
@@ -443,6 +450,7 @@ Motor_controller::Motor_controller(mc_config_t config)
 
 Motor_controller::~Motor_controller()
 {
+  ROS_INFO("Program stopped; deleting handles...");
   PhidgetMotorPositionController_delete(&ctrl_hdl);
   PhidgetEncoder_delete(&encoder_hdl);
   PhidgetTemperatureSensor_delete(&temp_hdl);
