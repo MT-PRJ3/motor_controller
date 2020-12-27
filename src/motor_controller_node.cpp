@@ -21,60 +21,37 @@ typedef struct
   ros::Publisher speed_r;
 } ros_publisher_t;
 
+typedef struct bool_stamped_t
+{
+  std_msgs::Bool msg;
+  ros::Time time;
+};
+
+typedef struct float_stamped_t
+{
+  std_msgs::Float32 msg;
+  ros::Time time;
+};
+
+
+
 ros_publisher_t pub;
 
-/**
- * This tutorial demonstrates simple sending of messages over the ROS system.
- */
+geometry_msgs::TwistStamped cmd_vel;
+bool_stamped_t bumper;
+bool_stamped_t saftey_circuit;
+bool_stamped_t charging;
+float_stamped_t bat_voltage;
 
-geometry_msgs::Twist cmd_vel;
+mc_state_t state = init;
 
 int main(int argc, char **argv)
 {
-  /**
-   * The ros::init() function needs to see argc and argv so that it can perform
-   * any ROS arguments and name remapping that were provided at the command line.
-   * For programmatic remappings you can use a different version of init() which takes
-   * remappings directly, but for most command-line programs, passing argc and argv is
-   * the easiest way to do it.  The third argument to init() is the name of the node.
-   *
-   * You must call one of the versions of ros::init() before using any other
-   * part of the ROS system.
-   */
-
-  mc_state_t state = init;
-
-  /**
-   * NodeHandle is the main access point to communications with the ROS system.
-   * The first NodeHandle constructed will fully initialize this node, and the last
-   * NodeHandle destructed will close down the node.
-   */
-
   ros::init(argc, argv, "motor_controller_node");
 
   ros::NodeHandle n;
 
-  /**
-   * The advertise() function is how you tell ROS that you want to
-   * publish on a given topic name. This invokes a call to the ROS
-   * master node, which keeps a registry of who is publishing and who
-   * is subscribing. After this advertise() call is made, the master
-   * node will notify anyone who is trying to subscribe to this topic name,
-   * and they will in turn negotiate a peer-to-peer connection with this
-   * node.  advertise() returns a Publisher object which allows you to
-   * publish messages on that topic through a call to publish().  Once
-   * all copies of the returned Publisher object are destroyed, the topic
-   * will be automatically unadvertised.
-   *
-   * The second parameter to advertise() is the size of the message queue
-   * used for publishing messages.  If messages are published more quickly
-   * than we can send them, the number here specifies how many messages to
-   * buffer up before throwing some away.
-   */
-
   ros::Rate loop_rate(FREQUENCY);
-
-  // Initialize variables and ros publishers and subscribers; create controller handles
 
   pub.temp_l = n.advertise<sensor_msgs::Temperature>("temp_l", 1000);
   pub.temp_r = n.advertise<sensor_msgs::Temperature>("temp_r", 1000);
@@ -83,9 +60,11 @@ int main(int argc, char **argv)
   pub.speed_l = n.advertise<std_msgs::Float64>("speed_l", 1000);
   pub.speed_r = n.advertise<std_msgs::Float64>("speed_r", 1000);
   ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 1000, cmd_vel_cb);
-
-  // Motor_controller controller_l(VINT_SN, left);
-  // return controller_l.connect();
+  ros::Subscriber rtd_bttn_sub = n.subscribe("rtd", 1000, rtd_bttn_cb);
+  ros::Subscriber bumper_sub = n.subscribe("bumper", 1000, bumper_cb);
+  ros::Subscriber sc_sub = n.subscribe("safety_circuit", 1000, sc_cb);
+  ros::Subscriber charging_sub = n.subscribe("charging", 1000, charging_cb);
+  ros::Subscriber bat_voltage_sub = n.subscribe("vBat", 1000, vbat_cb);
 
   state = connect_controllers;
 
@@ -163,7 +142,7 @@ int main(int argc, char **argv)
       {
         if (robot_ok())
         {
-          calculate_v(cmd_vel, &v_l, &v_r);
+          calculate_v(cmd_vel.twist, &v_l, &v_r);
           controller[left]->set_speed(v_l);
           controller[right]->set_speed(v_r);
           ROS_INFO("speeds:");
@@ -244,12 +223,46 @@ bool robot_ok(){
 
 void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg)
 {
-  cmd_vel = *msg;
+  cmd_vel.twist = *msg;
+  cmd_vel.header.stamp = ros::Time::now();
 }
 
-bool assert_driving_command()
-{
-  return true;
+void rtd_bttn_cb(const std_msgs::Bool::ConstPtr &msg){
+  static bool old;
+  if((msg->data) && (!old)){
+    //rising flank; button pressed
+    ROS_INFO("RTD button pressed");
+    if(state == wait_for_rtd){
+      state = drive;
+    }else
+    {
+      if(state == drive){
+        state = brake;
+      }
+    }
+  }
+  old = msg->data;
+}
+
+void bumper_cb(const std_msgs::Bool::ConstPtr &msg){
+  bumper.msg = *msg;
+  bumper.time = ros::Time::now();
+}
+
+void sc_cb(const std_msgs::Bool::ConstPtr &msg){
+  saftey_circuit.msg = *msg;
+  saftey_circuit.time = ros::Time::now();
+}
+
+void charging_cb(const std_msgs::Bool::ConstPtr &msg){
+  charging.msg = *msg;
+  charging.time = ros::Time::now();
+}
+
+void vbat_cb(const std_msgs::Float32::ConstPtr &msg){
+  bat_voltage.msg = *msg;
+  bat_voltage.time = ros::Time::now();
+
 }
 
 double calculate_r(double v_lin, double v_ang)
