@@ -4,10 +4,12 @@ enum mc_state_t
 {
   init = 0x00,
   connect_controllers,
+  disengage,
+  disengaged,
   wait_for_rtd,
+  rtd,
   drive,
   brake,
-  disengaged,
   deinit
 };
 
@@ -21,31 +23,44 @@ typedef struct
   ros::Publisher speed_r;
 } ros_publisher_t;
 
-typedef struct bool_stamped_t
+struct bool_stamped_t
 {
   std_msgs::Bool msg;
   ros::Time time;
 };
 
-typedef struct float_stamped_t
+struct float_stamped_t
 {
   std_msgs::Float32 msg;
   ros::Time time;
 };
 
+struct twist_stamped_t
+{
+  geometry_msgs::Twist msg;
+  ros::Time time;
+};
 
-
-
+static void rtd_bttn_cb(const std_msgs::Bool::ConstPtr &msg);
+static void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg);
+static void bumper_cb(const std_msgs::Bool::ConstPtr &msg);
+static void sc_cb(const std_msgs::Bool::ConstPtr &msg);
+static void charging_cb(const std_msgs::Bool::ConstPtr &msg);
+static void vbat_cb(const std_msgs::Float32::ConstPtr &msg);
+static void us_0_cb(const sensor_msgs::Range::ConstPtr &msg);
+static void us_1_cb(const sensor_msgs::Range::ConstPtr &msg);
+static void us_2_cb(const sensor_msgs::Range::ConstPtr &msg);
+static void us_3_cb(const sensor_msgs::Range::ConstPtr &msg);
+static void us_4_cb(const sensor_msgs::Range::ConstPtr &msg);
+static void us_5_cb(const sensor_msgs::Range::ConstPtr &msg);
 
 ros_publisher_t pub;
-
-geometry_msgs::TwistStamped cmd_vel;
+twist_stamped_t cmd_vel;
 bool_stamped_t bumper;
 bool_stamped_t saftey_circuit;
 bool_stamped_t charging;
 float_stamped_t bat_voltage;
 sensor_msgs::Range us[6];
-
 
 mc_state_t state = init;
 
@@ -124,19 +139,24 @@ int main(int argc, char **argv)
         else
         {
           controller[right]->report_device_info();
-          state = wait_for_rtd;
+          state = disengaged;
         }
       }
       break;
 
-    case wait_for_rtd: // check if the robot is OK and wait for the ready to drive command
+    case disengage:
+      controller[left]->engage_motors(false);
+      controller[right]->engage_motors(false);
+      state = disengaged;
+      //break;  intentional fallthrough
+
+    case disengaged: // disengage the controll loop of the controllers to allow tire movements
       if (controller[left]->check_connection() && controller[right]->check_connection())
       {
-        if (true)
+        if (sensor_status() == robot_ok)
         {
-          state = drive;
-          controller[left]->engage_motors(true);
-          controller[right]->engage_motors(true);
+          state = wait_for_rtd;
+          ROS_INFO("Failstate resolved; waiting for rtd");
         }
       }
       else
@@ -144,28 +164,50 @@ int main(int argc, char **argv)
         ROS_ERROR("CONNECTION LOST!");
         state = connect_controllers;
       }
-
       break;
+
+    case wait_for_rtd: // check if the robot is OK and wait for the ready to drive command
+      if (controller[left]->check_connection() && controller[right]->check_connection())
+      {
+        robot_error_t status = sensor_status();
+        if (status != robot_ok)
+        {
+          state = disengaged;
+          ROS_INFO("sensor status returned 0x%x; returning to disengaged state", status);
+        }
+      }
+      else
+      {
+        ROS_ERROR("CONNECTION LOST!");
+        state = connect_controllers;
+      }
+      break;
+
+    case rtd:
+      controller[left]->engage_motors(true);
+      controller[right]->engage_motors(true);
+      state = drive;
+      //break;  intentional fallthrough
 
     case drive: // drive the robot
       if (controller[left]->check_connection() && controller[right]->check_connection())
       {
-        if (robot_ok())
+        robot_error_t status = sensor_status();
+        if (status == robot_ok)
         {
-          calculate_v(cmd_vel.twist, &v_l, &v_r);
+          calculate_v(cmd_vel.msg, &v_l, &v_r);
           controller[left]->set_speed(v_l);
           controller[right]->set_speed(v_r);
           ROS_INFO("speeds:");
           ROS_INFO("Speed left: %g", controller[left]->get_speed());
           ROS_INFO("Speed right: %g", controller[right]->get_speed());
-
         }
         else
         {
           controller[left]->set_speed(0);
           controller[right]->set_speed(0);
           state = brake;
-          ROS_WARN("Robot not ok; trying to brake");
+          ROS_WARN("sensor status reported 0x%x; entering brake state", status);
         }
       }
       else
@@ -179,11 +221,9 @@ int main(int argc, char **argv)
     case brake: //brake to a standstill (preferrably fast)
       if (controller[left]->check_connection() && controller[right]->check_connection())
       {
-        if ((controller[left]->get_speed() <= 0.1) && (controller[right]->get_speed() <= 0.1))
+        if ((controller[left]->get_speed() <= STANDING_THRESHHOLD) && (controller[right]->get_speed() <= STANDING_THRESHHOLD))
         {
-          controller[left]->engage_motors(false);
-          controller[right]->engage_motors(false);
-          state = disengaged;
+          state = disengage;
           ROS_INFO("Robot standing; disengaging motors");
         }
       }
@@ -194,21 +234,6 @@ int main(int argc, char **argv)
       }
       break;
 
-    case disengaged: // disengage the controll loop of the controllers to allow tire movements
-      if (controller[left]->check_connection() && controller[right]->check_connection())
-      {
-        if(robot_ok()){
-          state = wait_for_rtd;
-          ROS_INFO("Failstate resolved; waiting for rtd");
-        }
-      }
-      else
-      {
-        ROS_ERROR("CONNECTION LOST!");
-        state = connect_controllers;
-      }      
-      break;
-
     case deinit: // close all connections and shutdown
 
       delete controller[left];
@@ -216,7 +241,7 @@ int main(int argc, char **argv)
       return -1;
 
     default:
-
+      ROS_ERROR("SOMEHOW RECHED INVALID STATE IN THE MAIN MOTOR CONTROLLER STATEMACHINE!");
       break;
     }
 
@@ -227,81 +252,155 @@ int main(int argc, char **argv)
   return 0;
 }
 
-bool robot_ok(){
+robot_error_t sensor_status()
+{
   ros::Duration age;
 
-  age = ros::Time::now() - cmd_vel.header.stamp;
-  if(age.toSec() > CMD_VEL_TIMEOUT){
-    return false;
+  age = ros::Time::now() - cmd_vel.time;
+  if (age.toSec() > CMD_VEL_TIMEOUT)
+  {
+    return cmd_vel_timeout;
   }
 
   age = ros::Time::now() - bumper.time;
-  if(age.toSec() > CMD_VEL_TIMEOUT){
-    return false;
+  if (age.toSec() > BUMPER_TIMEOUT)
+  {
+    return bumper_timeout;
   }
-}
-
-void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg)
-{
-  cmd_vel.twist = *msg;
-  cmd_vel.header.stamp = ros::Time::now();
-}
-
-void rtd_bttn_cb(const std_msgs::Bool::ConstPtr &msg){
-  static bool old;
-  if((msg->data) && (!old)){
-    //rising flank; button pressed
-    ROS_INFO("RTD button pressed");
-    if(state == wait_for_rtd){
-      state = drive;
-    }else
+  else
+  {
+    if (bumper.msg.data == true)
     {
-      if(state == drive){
+      return bumper_hit;
+    }
+  }
+
+  age = ros::Time::now() - saftey_circuit.time;
+  if (age.toSec() > SC_TIMEOUT)
+  {
+    return sc_timeout;
+  }
+  else
+  {
+    if (saftey_circuit.msg.data == false)
+    {
+      return sc_open;
+    }
+  }
+
+  age = ros::Time::now() - charging.time;
+  if (age.toSec() > CHARGING_TIMEOUT)
+  {
+    return charging_timeout;
+  }
+  else
+  {
+    if (charging.msg.data == true)
+    {
+      return charger_connected;
+    }
+  }
+
+  for (uint8_t i = 0; i < 6; i++)
+  {
+    age = ros::Time::now() - us[i].header.stamp;
+    if (age.toSec() > US_TIMEOUT)
+    {
+      us_timeout;
+    }
+    else
+    {
+      if (us[i].range < MIN_US_RANGE)
+      {
+        return us_range_low;
+      }
+    }
+  }
+
+  return robot_ok;
+}
+
+static void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg)
+{
+  cmd_vel.msg = *msg;
+  cmd_vel.time = ros::Time::now();
+}
+
+static void rtd_bttn_cb(const std_msgs::Bool::ConstPtr &msg)
+{
+  static bool old;
+  if ((msg->data) && (!old))
+  {
+    //rising flank; button pressed
+    if (state == wait_for_rtd)
+    {
+      state = rtd;
+      ROS_INFO("Engaging Motors");
+    }
+    else
+    {
+      if (state == drive)
+      {
         state = brake;
+        ROS_INFO("Stopping Robot...");
+      }
+      else
+      {
+        robot_error_t status = sensor_status();
+        ROS_INFO("Can't dive; error code: 0x%x", status);
       }
     }
   }
   old = msg->data;
 }
 
-void bumper_cb(const std_msgs::Bool::ConstPtr &msg){
+static void bumper_cb(const std_msgs::Bool::ConstPtr &msg)
+{
   bumper.msg = *msg;
   bumper.time = ros::Time::now();
 }
 
-void sc_cb(const std_msgs::Bool::ConstPtr &msg){
+static void sc_cb(const std_msgs::Bool::ConstPtr &msg)
+{
   saftey_circuit.msg = *msg;
   saftey_circuit.time = ros::Time::now();
 }
 
-void charging_cb(const std_msgs::Bool::ConstPtr &msg){
+static void charging_cb(const std_msgs::Bool::ConstPtr &msg)
+{
   charging.msg = *msg;
   charging.time = ros::Time::now();
 }
 
-void vbat_cb(const std_msgs::Float32::ConstPtr &msg){
+static void vbat_cb(const std_msgs::Float32::ConstPtr &msg)
+{
   bat_voltage.msg = *msg;
   bat_voltage.time = ros::Time::now();
-
 }
 
-void us_0_cb(const sensor_msgs::Range::ConstPtr &msg){
-  us[0] = *msg;  
+static void us_0_cb(const sensor_msgs::Range::ConstPtr &msg)
+{
+  us[0] = *msg;
 }
-void us_1_cb(const sensor_msgs::Range::ConstPtr &msg){
-  us[1] = *msg;  
+static void us_1_cb(const sensor_msgs::Range::ConstPtr &msg)
+{
+  us[1] = *msg;
 }
-void us_2_cb(const sensor_msgs::Range::ConstPtr &msg){
-  us[2] = *msg;  
+static void us_2_cb(const sensor_msgs::Range::ConstPtr &msg)
+{
+  us[2] = *msg;
 }
-void us_3_cb(const sensor_msgs::Range::ConstPtr &msg){
-  us[3] = *msg;  
+static void us_3_cb(const sensor_msgs::Range::ConstPtr &msg)
+{
+  us[3] = *msg;
 }
-void us_4_cb(const sensor_msgs::Range::ConstPtr &msg){
-  us[4] = *msg;  
+static void us_4_cb(const sensor_msgs::Range::ConstPtr &msg)
+{
+  us[4] = *msg;
 }
-void us_5_cb(const sensor_msgs::Range::ConstPtr &msg){
-  us[5] = *msg;  
+static void us_5_cb(const sensor_msgs::Range::ConstPtr &msg)
+{
+  us[5] = *msg;
 }
 
 double calculate_r(double v_lin, double v_ang)
@@ -342,7 +441,7 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l_setpoint, double *v_r
     break;
 
   case 1: // v_ang = 0 -> only linear motion
-  
+
     if (v_lin > V_LIN_MAX)
     { // Limit maximum linear speed
       if (v_lin > 0)

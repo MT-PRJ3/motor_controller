@@ -1,6 +1,9 @@
 #include "ros/ros.h"
 #include "std_msgs/String.h"
 #include "std_msgs/Float64.h"
+#include "std_msgs/Float32.h"
+#include "std_msgs/Bool.h"
+#include "sensor_msgs/Range.h"
 #include "geometry_msgs/Twist.h"
 #include "sensor_msgs/Temperature.h"
 
@@ -12,6 +15,15 @@
 #include <math.h>
 
 #define FREQUENCY 100 //Hz  Execution frequency of the programm
+
+#define CMD_VEL_TIMEOUT (3 * 1 / FREQUENCY) // timeout for the subscribed topics [s]
+#define SC_TIMEOUT 0.5                      // [s]
+#define BUMPER_TIMEOUT 0.5                  // [s]
+#define US_TIMEOUT 0.5                      // [s]
+#define CHARGING_TIMEOUT 0.5                // [s]
+#define MIN_US_RANGE 0.35                   // [m]
+#define STANDING_THRESHHOLD 0.1             // [m/s]
+#define MAX_CONTROLLER_TEMP 75              // [°C]
 
 #define VINT_SN 620709
 
@@ -37,7 +49,7 @@
 #define POSITION_CONTROLLER_DATA_INTERVAL 20          // [ms]
 #define POSITION_CONTROLLER_FAILSAFE_TIMER 500        // [ms]
 #define POSITION_CONTROLLER_CURRENT_REGULATOR_GAIN 10 // [?]
-#define POSITION_CONTROLLER_ACCELERATION 50000          // [?]
+#define POSITION_CONTROLLER_ACCELERATION 50000        // [?]
 //#define POSITION_CONTROLLER_RESCALE_FACTOR 5400 // encoder steps per revolution
 
 #define K_P 0.5 // P component of the PID     I dont know what im doing, should probably be changed!
@@ -59,18 +71,33 @@ struct mc_config_t
     bool invert_direction;
 };
 
-enum controller_side_t
+enum robot_error_t
 {
-  left = 0x00,
-  right = 0x01
+    robot_ok = 0x00,
+    vBat_low = 0x01,
+    bumper_hit = 0x02,
+    sc_open = 0x03,
+    charger_connected = 0x04,
+    us_range_low = 0x05,
+    controller_over_temp = 0x06,
+    vBat_timeout = 0x11,
+    bumper_timeout = 0x12,
+    sc_timeout = 0x13,
+    charging_timeout = 0x14,
+    us_timeout = 0x15,
+    cmd_vel_timeout = 0x17
 };
 
+enum controller_side_t
+{
+    left = 0x00,
+    right = 0x01
+};
 
 class Motor_controller
 {
 
 public:
-
     PhidgetMotorPositionControllerHandle ctrl_hdl;
     PhidgetCurrentInputHandle current_hdl;
     PhidgetTemperatureSensorHandle temp_hdl;
@@ -143,11 +170,8 @@ private:
     bool connect_encoder();
 };
 
-bool robot_ok();
-
-void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg);
+robot_error_t sensor_status();
 
 double calculate_r(double v_lin, double v_ang);
 
 void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l, double *v_r);
-
