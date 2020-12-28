@@ -35,6 +35,8 @@ typedef struct float_stamped_t
 
 
 
+
+
 ros_publisher_t pub;
 
 geometry_msgs::TwistStamped cmd_vel;
@@ -42,6 +44,8 @@ bool_stamped_t bumper;
 bool_stamped_t saftey_circuit;
 bool_stamped_t charging;
 float_stamped_t bat_voltage;
+sensor_msgs::Range us[6];
+
 
 mc_state_t state = init;
 
@@ -65,6 +69,12 @@ int main(int argc, char **argv)
   ros::Subscriber sc_sub = n.subscribe("safety_circuit", 1000, sc_cb);
   ros::Subscriber charging_sub = n.subscribe("charging", 1000, charging_cb);
   ros::Subscriber bat_voltage_sub = n.subscribe("vBat", 1000, vbat_cb);
+  ros::Subscriber ultrasound_0_sub = n.subscribe("ultrasound_0", 1000, us_0_cb);
+  ros::Subscriber ultrasound_1_sub = n.subscribe("ultrasound_1", 1000, us_1_cb);
+  ros::Subscriber ultrasound_2_sub = n.subscribe("ultrasound_2", 1000, us_2_cb);
+  ros::Subscriber ultrasound_3_sub = n.subscribe("ultrasound_3", 1000, us_3_cb);
+  ros::Subscriber ultrasound_4_sub = n.subscribe("ultrasound_4", 1000, us_4_cb);
+  ros::Subscriber ultrasound_5_sub = n.subscribe("ultrasound_5", 1000, us_5_cb);
 
   state = connect_controllers;
 
@@ -218,7 +228,17 @@ int main(int argc, char **argv)
 }
 
 bool robot_ok(){
-  return true;
+  ros::Duration age;
+
+  age = ros::Time::now() - cmd_vel.header.stamp;
+  if(age.toSec() > CMD_VEL_TIMEOUT){
+    return false;
+  }
+
+  age = ros::Time::now() - bumper.time;
+  if(age.toSec() > CMD_VEL_TIMEOUT){
+    return false;
+  }
 }
 
 void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg)
@@ -263,6 +283,25 @@ void vbat_cb(const std_msgs::Float32::ConstPtr &msg){
   bat_voltage.msg = *msg;
   bat_voltage.time = ros::Time::now();
 
+}
+
+void us_0_cb(const sensor_msgs::Range::ConstPtr &msg){
+  us[0] = *msg;  
+}
+void us_1_cb(const sensor_msgs::Range::ConstPtr &msg){
+  us[1] = *msg;  
+}
+void us_2_cb(const sensor_msgs::Range::ConstPtr &msg){
+  us[2] = *msg;  
+}
+void us_3_cb(const sensor_msgs::Range::ConstPtr &msg){
+  us[3] = *msg;  
+}
+void us_4_cb(const sensor_msgs::Range::ConstPtr &msg){
+  us[4] = *msg;  
+}
+void us_5_cb(const sensor_msgs::Range::ConstPtr &msg){
+  us[5] = *msg;  
 }
 
 double calculate_r(double v_lin, double v_ang)
