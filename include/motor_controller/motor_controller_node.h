@@ -5,7 +5,6 @@
 #include "std_msgs/Bool.h"
 #include "sensor_msgs/Range.h"
 #include "geometry_msgs/Twist.h"
-#include "sensor_msgs/Temperature.h"
 
 #include "phidget22.h"
 
@@ -69,6 +68,9 @@ struct mc_config_t
     double current_limit;
     uint32_t watchdog_time;
     bool invert_direction;
+    ros::Publisher temp_pub;
+    ros::Publisher current_pub;
+    ros::Publisher speed_pub;
 };
 
 enum robot_error_t
@@ -131,6 +133,10 @@ public:
 
     void report_device_info();
 
+    void speed_cb(double speed);
+    void current_cb(double current);
+    void temperature_cb(double temperature);
+
 private:
     bool connected;
     int hub_port;
@@ -139,9 +145,13 @@ private:
     double temperature;
     double current;
 
-    cb_ptr speed_cb;
-    cb_ptr current_cb;
-    cb_ptr temperature_cb;
+    cb_ptr ext_speed_cb;
+    cb_ptr ext_current_cb;
+    cb_ptr ext_temperature_cb;
+
+    ros::Publisher temp_pub;
+    ros::Publisher current_pub;
+    ros::Publisher speed_pub;
 
     double tire_circumference;
     double encoder_resolution;

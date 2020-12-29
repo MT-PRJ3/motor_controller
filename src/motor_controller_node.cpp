@@ -13,15 +13,6 @@ enum mc_state_t
   deinit
 };
 
-typedef struct
-{
-  ros::Publisher temp_l;
-  ros::Publisher temp_r;
-  ros::Publisher current_l;
-  ros::Publisher current_r;
-  ros::Publisher speed_l;
-  ros::Publisher speed_r;
-} ros_publisher_t;
 
 struct bool_stamped_t
 {
@@ -54,7 +45,6 @@ static void us_3_cb(const sensor_msgs::Range::ConstPtr &msg);
 static void us_4_cb(const sensor_msgs::Range::ConstPtr &msg);
 static void us_5_cb(const sensor_msgs::Range::ConstPtr &msg);
 
-ros_publisher_t pub;
 twist_stamped_t cmd_vel;
 bool_stamped_t bumper;
 bool_stamped_t saftey_circuit;
@@ -72,12 +62,6 @@ int main(int argc, char **argv)
 
   ros::Rate loop_rate(FREQUENCY);
 
-  pub.temp_l = n.advertise<sensor_msgs::Temperature>("temp_l", 1000);
-  pub.temp_r = n.advertise<sensor_msgs::Temperature>("temp_r", 1000);
-  pub.current_l = n.advertise<std_msgs::Float64>("current_l", 1000);
-  pub.current_r = n.advertise<std_msgs::Float64>("current_r", 1000);
-  pub.speed_l = n.advertise<std_msgs::Float64>("speed_l", 1000);
-  pub.speed_r = n.advertise<std_msgs::Float64>("speed_r", 1000);
   ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 1000, cmd_vel_cb);
   ros::Subscriber rtd_bttn_sub = n.subscribe("rtd", 1000, rtd_bttn_cb);
   ros::Subscriber bumper_sub = n.subscribe("bumper", 1000, bumper_cb);
@@ -102,7 +86,11 @@ int main(int argc, char **argv)
       .acceleration = POSITION_CONTROLLER_ACCELERATION,
       .current_limit = MOTOR_CURRENT_LIMIT,
       .watchdog_time = 500,
-      .invert_direction = false};
+      .invert_direction = false,
+      .temp_pub = n.advertise<std_msgs::Float64>("temp_l", 1000),
+      .current_pub = n.advertise<std_msgs::Float64>("current_l", 1000),
+      .speed_pub = n.advertise<std_msgs::Float64>("speed_l", 1000)
+  };
 
   Motor_controller *controller[2];
 
@@ -110,6 +98,9 @@ int main(int argc, char **argv)
 
   config.invert_direction = true;
   config.hub_port = right;
+  config.temp_pub = n.advertise<std_msgs::Float64>("temp_r", 1000);
+  config.current_pub = n.advertise<std_msgs::Float64>("current_r", 1000);
+  config.speed_pub = n.advertise<std_msgs::Float64>("speed_r", 1000);
 
   controller[right] = new Motor_controller(config);
 
@@ -118,9 +109,6 @@ int main(int argc, char **argv)
 
   while (ros::ok())
   {
-    /**
-     * This is a message object. You stuff it with data, and then publish it.
-     */
     switch (state)
     {
 
@@ -593,6 +581,10 @@ Motor_controller::Motor_controller(mc_config_t config)
 
   this->connected = false;
 
+  this->temp_pub = config.temp_pub;
+  this->current_pub = config.current_pub;
+  this->speed_pub = config.speed_pub;
+
   PhidgetCurrentInput_create(&current_hdl);
   PhidgetTemperatureSensor_create(&temp_hdl);
   PhidgetMotorPositionController_create(&ctrl_hdl);
@@ -753,17 +745,21 @@ bool Motor_controller::set_controller_parameters(double k_p, double k_i, double 
 
 void CCONV Motor_controller::positionChangeHandler(PhidgetEncoderHandle ch, void *ctx, int positionChange, double timeChange, int indexTriggered)
 {
-  *((double *)ctx) = (((double)positionChange / timeChange) / (ENCODER_RESOLUTION * GEAR_RATIO)) * TIRE_CIRCUMFERENCE * 1000;
+  Motor_controller *ctrl = static_cast<Motor_controller*>(ctx);
+  double speed = (((double)positionChange / timeChange) / (ENCODER_RESOLUTION * GEAR_RATIO)) * TIRE_CIRCUMFERENCE * 1000;
+  ctrl->speed_cb(speed);
 }
 
 void CCONV Motor_controller::currentChangeHandler(PhidgetCurrentInputHandle ch, void *ctx, double current)
 {
-  *((double *)ctx) = current;
+  Motor_controller *ctrl = static_cast<Motor_controller*>(ctx);
+  ctrl->current_cb(current);
 }
 
 void CCONV Motor_controller::temperatureChangeHandler(PhidgetTemperatureSensorHandle ch, void *ctx, double temperature)
 {
-  *((double *)ctx) = temperature;
+  Motor_controller *ctrl = static_cast<Motor_controller*>(ctx);
+  ctrl->temperature_cb(temperature);
 }
 
 bool Motor_controller::connect_current_sens()
@@ -785,7 +781,7 @@ bool Motor_controller::connect_current_sens()
   {
     ROS_INFO("Connected");
     PhidgetCurrentInput_setDataInterval(current_hdl, MOTOR_DATA_INTERVALL);
-    PhidgetCurrentInput_setOnCurrentChangeHandler(current_hdl, currentChangeHandler, &current);
+    PhidgetCurrentInput_setOnCurrentChangeHandler(current_hdl, currentChangeHandler, this);
     return true;
   }
 }
@@ -868,4 +864,25 @@ bool Motor_controller::connect_encoder()
     PhidgetEncoder_setOnPositionChangeHandler(encoder_hdl, positionChangeHandler, &speed);
     return true;
   }
+}
+
+void Motor_controller::speed_cb(double speed){
+  this->speed = speed;
+  std_msgs::Float64 msg;
+  msg.data = speed;
+  this->speed_pub.publish(msg);
+}
+
+void Motor_controller::current_cb(double current){
+  this->current = current;
+  std_msgs::Float64 msg;
+  msg.data = current;
+  this->current_pub.publish(msg);
+}
+
+void Motor_controller::temperature_cb(double temperature){
+  this->temperature = temperature;
+  std_msgs::Float64 msg;
+  msg.data = temperature;
+  this->temp_pub.publish(msg);
 }
