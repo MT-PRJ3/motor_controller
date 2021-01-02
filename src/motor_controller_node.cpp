@@ -13,7 +13,6 @@ enum mc_state_t
   deinit
 };
 
-
 struct bool_stamped_t
 {
   std_msgs::Bool msg;
@@ -63,7 +62,7 @@ int main(int argc, char **argv)
   ros::Rate loop_rate(FREQUENCY);
 
   ros::Subscriber cmd_vel_sub = n.subscribe("cmd_vel", 1000, cmd_vel_cb);
-  ros::Subscriber rtd_bttn_sub = n.subscribe("rtd", 1000, rtd_bttn_cb);
+  ros::Subscriber rtd_bttn_sub = n.subscribe("joy", 1000, rtd_bttn_cb);
   ros::Subscriber bumper_sub = n.subscribe("bumper", 1000, bumper_cb);
   ros::Subscriber sc_sub = n.subscribe("safety_circuit", 1000, sc_cb);
   ros::Subscriber charging_sub = n.subscribe("charging", 1000, charging_cb);
@@ -314,10 +313,19 @@ static void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg)
   cmd_vel.time = ros::Time::now();
 }
 
-static void rtd_bttn_cb(const std_msgs::Bool::ConstPtr &msg)
+static void rtd_bttn_cb(const sensor_msgs::Joy::ConstPtr &msg)
 {
+  bool new_value;
+
+  if(msg->buttons[0] != 0){
+    new_value = true;
+  }else
+  {
+    new_value = false;
+  }
+
   static bool old;
-  if ((msg->data) && (!old))
+  if ((new_value) && (!old))
   {
     //rising flank; button pressed
     if (state == wait_for_rtd)
@@ -339,7 +347,7 @@ static void rtd_bttn_cb(const std_msgs::Bool::ConstPtr &msg)
       }
     }
   }
-  old = msg->data;
+  old = new_value;
 }
 
 static void bumper_cb(const std_msgs::Bool::ConstPtr &msg)

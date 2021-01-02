@@ -5,6 +5,7 @@
 #include "std_msgs/Bool.h"
 #include "sensor_msgs/Range.h"
 #include "geometry_msgs/Twist.h"
+#include "sensor_msgs/Joy.h"
 
 #include "phidget22.h"
 
