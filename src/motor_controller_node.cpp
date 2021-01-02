@@ -31,7 +31,7 @@ struct twist_stamped_t
   ros::Time time;
 };
 
-static void rtd_bttn_cb(const std_msgs::Bool::ConstPtr &msg);
+static void rtd_bttn_cb(const sensor_msgs::Joy::ConstPtr &msg);
 static void cmd_vel_cb(const geometry_msgs::Twist::ConstPtr &msg);
 static void bumper_cb(const std_msgs::Bool::ConstPtr &msg);
 static void sc_cb(const std_msgs::Bool::ConstPtr &msg);
@@ -658,11 +658,6 @@ void Motor_controller::report_device_info()
 
 bool Motor_controller::connect()
 { //connect to all relevant channels on the controller
-  if (!connect_position_controller())
-  {
-    return false;
-  }
-
   if (!connect_current_sens())
   {
     return false;
@@ -677,6 +672,12 @@ bool Motor_controller::connect()
   {
     return false;
   }
+  
+  if (!connect_position_controller())
+  {
+    return false;
+  }
+
 
   connected = true;
   return true;
