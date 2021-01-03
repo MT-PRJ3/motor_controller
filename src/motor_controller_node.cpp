@@ -2,8 +2,7 @@
 
 enum mc_state_t
 {
-  init = 0x00,
-  connect_controllers,
+  connect_controllers = 0x00,
   disengage,
   disengaged,
   wait_for_rtd,
@@ -76,6 +75,10 @@ int main(int argc, char **argv)
 
   state = connect_controllers;
 
+  // Create two pointers at Motor_controller objects
+  Motor_controller *controller[2];
+
+  // Configure the left motor
   mc_config_t config = {
       .hub_port = left,
       .hub_sn = VINT_SN,
@@ -91,26 +94,29 @@ int main(int argc, char **argv)
       .speed_pub = n.advertise<std_msgs::Float64>("speed_l", 1000)
   };
 
-  Motor_controller *controller[2];
-
+  // Create the left motor_controller object with the configuration above
   controller[left] = new Motor_controller(config);
 
+  // reconfigure the config struct for the right controller
   config.invert_direction = true;
   config.hub_port = right;
   config.temp_pub = n.advertise<std_msgs::Float64>("temp_r", 1000);
   config.current_pub = n.advertise<std_msgs::Float64>("current_r", 1000);
   config.speed_pub = n.advertise<std_msgs::Float64>("speed_r", 1000);
 
+  // create the right motor_controller object with the configuration above
   controller[right] = new Motor_controller(config);
 
+  // create variables to stave the wheel speed in
   double v_l;
   double v_r;
 
+  //Main Loop
   while (ros::ok())
   {
     switch (state)
     {
-
+    // Try to connect the two controllers.
     case connect_controllers: // connect and configure all the controller devices
       if (!controller[left]->connect())
       {
@@ -125,16 +131,18 @@ int main(int argc, char **argv)
         }
         else
         {
+          // Controllers are connected successfully; proceed to disengaged state
           controller[right]->report_device_info();
           state = disengaged;
         }
       }
       break;
 
+    // This state is there for convenience to easily change to the disengaged state without manually disengaging the motors first
     case disengage:
-      controller[left]->engage_motors(false);
+      controller[left]->engage_motors(false); // disengage the two motors
       controller[right]->engage_motors(false);
-      state = disengaged;
+      state = disengaged; // //preceed to disengaged state
       //break;  intentional fallthrough
 
     case disengaged: // disengage the controll loop of the controllers to allow tire movements
@@ -142,34 +150,41 @@ int main(int argc, char **argv)
       {
         if (sensor_status() == robot_ok)
         {
+          //its ok to drive -> change to wait_for_rtd state
           state = wait_for_rtd;
           ROS_INFO("Failstate resolved; waiting for rtd");
         }
+        // its not ok to drive -> do nothing
       }
       else
       {
+        // Connection to the controllers lost -> report error and change ot connect_controllers state
         ROS_ERROR("CONNECTION LOST!");
         state = connect_controllers;
       }
       break;
 
-    case wait_for_rtd: // check if the robot is OK and wait for the ready to drive command
+    case wait_for_rtd: // Wait for the ready to drive command.
       if (controller[left]->check_connection() && controller[right]->check_connection())
       {
         robot_error_t status = sensor_status();
         if (status != robot_ok)
         {
+          // Driving is not safe -> return to disengaged state
           state = disengaged;
           ROS_INFO("sensor status returned 0x%x; returning to disengaged state", status);
         }
+        // driving is safe -> do nothing and wait for the rtd signal. (Moving to the next state is done in the rtd_bttn_cb function)
       }
       else
       {
+        // Connection lost -> go to connect_controllers state
         ROS_ERROR("CONNECTION LOST!");
         state = connect_controllers;
       }
       break;
 
+    // This state is there for convenience to easily change to the drive state without manually engaging the motors first
     case rtd:
       controller[left]->engage_motors(true);
       controller[right]->engage_motors(true);
@@ -182,23 +197,31 @@ int main(int argc, char **argv)
         robot_error_t status = sensor_status();
         if (status == robot_ok)
         {
+          // Status ok
+          // calculate wheel speed
           calculate_v(cmd_vel.msg, &v_l, &v_r);
+          // set wheel speed
           controller[left]->set_speed(v_l);
           controller[right]->set_speed(v_r);
-          ROS_INFO("speeds:");
+
+          ROS_INFO("");
           ROS_INFO("Speed left: %g", controller[left]->get_speed());
           ROS_INFO("Speed right: %g", controller[right]->get_speed());
         }
         else
         {
+          // Status not ok
+          // set speed to 0 (brake)
           controller[left]->set_speed(0);
           controller[right]->set_speed(0);
+          //go to brake state
           state = brake;
           ROS_WARN("sensor status reported 0x%x; entering brake state", status);
         }
       }
       else
       {
+        // Connection lost -> go to connect_controllers state
         ROS_ERROR("CONNECTION LOST!");
         state = connect_controllers;
       }
@@ -210,6 +233,7 @@ int main(int argc, char **argv)
       {
         if ((controller[left]->get_speed() <= STANDING_THRESHHOLD) && (controller[right]->get_speed() <= STANDING_THRESHHOLD))
         {
+          // Robot is (almost) standing -> disengage controllers so the robot can be pushed
           state = disengage;
           ROS_INFO("Robot standing; disengaging motors");
         }
@@ -243,22 +267,39 @@ robot_error_t sensor_status()
 {
   ros::Duration age;
 
+  age = ros::Time::now() - bumper.time;  // check if the last message is older than the timeout duration
+  if (age.toSec() > BUMPER_TIMEOUT)
+  {
+    // last message to old -> error
+    return bumper_timeout;
+  }
+  else
+  {
+    // data is still valid
+    if (bumper.msg.data == true)  // check if the data value is ok
+    {
+      // data value nok -> error
+      return bumper_hit;
+    }
+  }
+
+  // The same procedure as above for all other subscribed topics
   age = ros::Time::now() - cmd_vel.time;
   if (age.toSec() > CMD_VEL_TIMEOUT)
   {
     return cmd_vel_timeout;
   }
 
-  age = ros::Time::now() - bumper.time;
-  if (age.toSec() > BUMPER_TIMEOUT)
+  age = ros::Time::now() - bat_voltage.time;
+  if (age.toSec() > VBAT_TIMEOUT)
   {
-    return bumper_timeout;
+    return vBat_timeout;
   }
   else
   {
-    if (bumper.msg.data == true)
+    if (bat_voltage.data < VBAT_MIN)
     {
-      return bumper_hit;
+      return vBat_low;
     }
   }
 
@@ -789,7 +830,7 @@ bool Motor_controller::connect_current_sens()
   else
   {
     ROS_INFO("Connected");
-    PhidgetCurrentInput_setDataInterval(current_hdl, MOTOR_DATA_INTERVALL);
+    PhidgetCurrentInput_setDataInterval(current_hdl, 100);
     PhidgetCurrentInput_setOnCurrentChangeHandler(current_hdl, currentChangeHandler, this);
     return true;
   }
@@ -838,7 +879,7 @@ bool Motor_controller::connect_position_controller()
   {
     ROS_INFO("Connected");
     // PhidgetMotorPositionController_enableFailsafe(ctrl_hdl, watchdog_timer);
-    PhidgetMotorPositionController_setDataInterval(ctrl_hdl, 20); // 20 ms is the lowes data interval
+    PhidgetMotorPositionController_setDataInterval(ctrl_hdl, 20); // 20 ms is the lowest possible data interval
     PhidgetMotorPositionController_setAcceleration(ctrl_hdl, acceleration);
     PhidgetMotorPositionController_setCurrentLimit(ctrl_hdl, current_limit);
     PhidgetMotorPositionController_setFanMode(ctrl_hdl, FAN_MODE_AUTO);
