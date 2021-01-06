@@ -42,6 +42,12 @@ static void us_2_cb(const sensor_msgs::Range::ConstPtr &msg);
 static void us_3_cb(const sensor_msgs::Range::ConstPtr &msg);
 static void us_4_cb(const sensor_msgs::Range::ConstPtr &msg);
 static void us_5_cb(const sensor_msgs::Range::ConstPtr &msg);
+void publish_speed_l(double speed);
+void publish_temp_l(double speed);
+void publish_current_l(double current);
+void publish_speed_r(double current);
+void publish_temp_r(double temperature);
+void publish_current_r(double temperature);
 
 twist_stamped_t cmd_vel;
 bool_stamped_t bumper;
@@ -50,7 +56,14 @@ bool_stamped_t charging;
 float_stamped_t bat_voltage;
 sensor_msgs::Range us[6];
 
-mc_state_t state = init;
+mc_state_t state = connect_controllers;
+
+  ros::Publisher speed_l_pub;
+  ros::Publisher speed_r_pub;
+  ros::Publisher temp_l_pub;
+  ros::Publisher temp_r_pub;
+  ros::Publisher current_l_pub;
+  ros::Publisher current_r_pub;
 
 int main(int argc, char **argv)
 {
@@ -72,6 +85,12 @@ int main(int argc, char **argv)
   ros::Subscriber ultrasound_3_sub = n.subscribe("ultrasound_3", 1000, us_3_cb);
   ros::Subscriber ultrasound_4_sub = n.subscribe("ultrasound_4", 1000, us_4_cb);
   ros::Subscriber ultrasound_5_sub = n.subscribe("ultrasound_5", 1000, us_5_cb);
+  speed_l_pub = n.advertise<std_msgs::Float64>("speed_l", 1000);
+  speed_r_pub = n.advertise<std_msgs::Float64>("speed_r", 1000);
+  temp_l_pub = n.advertise<std_msgs::Float64>("temp_l", 1000);
+  temp_r_pub = n.advertise<std_msgs::Float64>("temp_r", 1000);
+  current_l_pub = n.advertise<std_msgs::Float64>("current_l", 1000);
+  current_r_pub = n.advertise<std_msgs::Float64>("current_r", 1000);
 
   state = connect_controllers;
 
@@ -88,25 +107,24 @@ int main(int argc, char **argv)
       .acceleration = POSITION_CONTROLLER_ACCELERATION,
       .current_limit = MOTOR_CURRENT_LIMIT,
       .watchdog_time = 500,
-      .invert_direction = false,
-      .temp_pub = n.advertise<std_msgs::Float64>("temp_l", 1000),
-      .current_pub = n.advertise<std_msgs::Float64>("current_l", 1000),
-      .speed_pub = n.advertise<std_msgs::Float64>("speed_l", 1000)
+      .invert_direction = false
   };
 
   // Create the left motor_controller object with the configuration above
   controller[left] = new Motor_controller(config);
+  controller[left]->attach_current_cb(publish_current_l);
+  controller[left]->attach_speed_cb(publish_speed_l);
+  controller[left]->attach_temperature_cb(publish_temp_l);
 
   // reconfigure the config struct for the right controller
   config.invert_direction = true;
   config.hub_port = right;
-  config.temp_pub = n.advertise<std_msgs::Float64>("temp_r", 1000);
-  config.current_pub = n.advertise<std_msgs::Float64>("current_r", 1000);
-  config.speed_pub = n.advertise<std_msgs::Float64>("speed_r", 1000);
 
   // create the right motor_controller object with the configuration above
   controller[right] = new Motor_controller(config);
-
+  controller[right]->attach_current_cb(publish_current_r);
+  controller[right]->attach_speed_cb(publish_speed_r);
+  controller[right]->attach_temperature_cb(publish_temp_r);
   // create variables to stave the wheel speed in
   double v_l;
   double v_r;
@@ -204,7 +222,7 @@ int main(int argc, char **argv)
           controller[left]->set_speed(v_l);
           controller[right]->set_speed(v_r);
 
-          ROS_INFO("");
+          ROS_INFO(" ");
           ROS_INFO("Speed left: %g", controller[left]->get_speed());
           ROS_INFO("Speed right: %g", controller[right]->get_speed());
         }
@@ -297,7 +315,7 @@ robot_error_t sensor_status()
   }
   else
   {
-    if (bat_voltage.data < VBAT_MIN)
+    if (bat_voltage.msg.data < VBAT_MIN)
     {
       return vBat_low;
     }
@@ -564,6 +582,37 @@ void calculate_v(geometry_msgs::Twist cmd_vel, double *v_l_setpoint, double *v_r
 
   //ROS_INFO("v_l: %g, v_r: %g", *v_l_setpoint, *v_r_setpoint);
   //ROS_INFO(" ");
+}
+
+void publish_speed_l(double speed){
+  std_msgs::Float64 msg;
+  msg.data = speed;
+  speed_l_pub.publish(msg);
+}
+void publish_temp_l(double temperature){
+  std_msgs::Float64 msg;
+  msg.data = temperature;
+  temp_l_pub.publish(msg);
+}
+void publish_current_l(double current){
+  std_msgs::Float64 msg;
+  msg.data = current;
+  current_l_pub.publish(msg);
+}
+void publish_speed_r(double speed){
+  std_msgs::Float64 msg;
+  msg.data = speed;
+  speed_r_pub.publish(msg);
+}
+void publish_temp_r(double temperature){
+  std_msgs::Float64 msg;
+  msg.data = temperature;
+  temp_r_pub.publish(msg);
+}
+void publish_current_r(double current){
+  std_msgs::Float64 msg;
+  msg.data = current;
+  current_r_pub.publish(msg);
 }
 
 //--Implementation of the Motor_controller class functions-----------------------------------------------------------------------------------
@@ -913,7 +962,7 @@ bool Motor_controller::connect_encoder()
   else
   {
     ROS_INFO("Connected");
-    PhidgetEncoder_setDataInterval(encoder_hdl, ENCODER_DATA_INTERVALL);
+    PhidgetEncoder_setDataInterval(encoder_hdl, 100); // minimum is 100ms
     PhidgetEncoder_setOnPositionChangeHandler(encoder_hdl, positionChangeHandler, &speed);
     return true;
   }
@@ -925,9 +974,6 @@ void Motor_controller::speed_cb(double speed){
   if(speed_cb_fct != nullptr){
     speed_cb_fct(speed);
   }
-  //std_msgs::Float64 msg;
-  //msg.data = speed;
-  //this->speed_pub.publish(msg);
 }
 
 void Motor_controller::current_cb(double current){
@@ -936,9 +982,6 @@ void Motor_controller::current_cb(double current){
   if(current_cb_fct != nullptr){
     current_cb_fct(current);
   }
-  //std_msgs::Float64 msg;
-  //msg.data = current;
-  //this->current_pub.publish(msg);
 }
 
 void Motor_controller::temperature_cb(double temperature){
@@ -947,9 +990,6 @@ void Motor_controller::temperature_cb(double temperature){
   if(temp_cb_fct != nullptr){
     temp_cb_fct(temperature);
   }
-  //std_msgs::Float64 msg;
-  //msg.data = temperature;
-  //this->temp_pub.publish(msg);
 }
 
 bool Motor_controller::new_speed_val(){
