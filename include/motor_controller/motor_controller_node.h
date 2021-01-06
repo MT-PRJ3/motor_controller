@@ -58,9 +58,9 @@ struct mc_config_t  //Struct containing the configuration values needed to creat
     double current_limit;       
     uint32_t watchdog_time;     // The timout of the watchdog timer in the Motor controller
     bool invert_direction;      // set to True if the Motor is mounted backwards (the motor direction is reversed)
-    ros::Publisher temp_pub;    // the publisher that should be used to publish the temperature as soon as it is availible
-    ros::Publisher current_pub; // the publisher that should be used to publish the current as soon as it is availible
-    ros::Publisher speed_pub;   // the publisher that should be used to publish the speed as soon as it is availible
+    cb_ptr temp_cb_fct;    // the publisher that should be used to publish the temperature as soon as it is availible
+    cb_ptr current_cb_fct; // the publisher that should be used to publish the current as soon as it is availible
+    cb_ptr speed_cb_fct;   // the publisher that should be used to publish the speed as soon as it is availible
 };
 
 enum robot_error_t  // The error values that can be returned by the sensor_status function
@@ -98,15 +98,21 @@ public:
 
     double get_speed();     //returns the last reported motor speed
 
+    bool new_speed_val();       // returns true if  a new speed value is availible
+
     double get_temperature();   //returns the last reported motor controller temperature
 
+    bool new_temp_val();        // returns true if a new temprerature value is availible
+
     double get_current();       //returns the last reported motor controller current
+    
+    bool new_current_val();     // returns true if  a new current value is availible
 
-    // void attach_speed_cb(cb_ptr ptr);
+    void attach_speed_cb(cb_ptr ptr);
 
-    // void attach_current_cb(cb_ptr ptr);
+    void attach_current_cb(cb_ptr ptr);
 
-    // void attach_temperature_cb(cb_ptr ptr);
+    void attach_temperature_cb(cb_ptr ptr);
 
     bool check_connection();    //checks if the controller is still responding. returns false if the connection was lost.
 
@@ -135,14 +141,13 @@ private:
     double speed;
     double temperature;
     double current;
+    bool new_speed;
+    bool new_temp;
+    bool new_current;
 
-    cb_ptr ext_speed_cb;
-    cb_ptr ext_current_cb;
-    cb_ptr ext_temperature_cb;
-
-    ros::Publisher temp_pub;
-    ros::Publisher current_pub;
-    ros::Publisher speed_pub;
+    cb_ptr temp_cb_fct;
+    cb_ptr current_cb_fct;
+    cb_ptr speed_cb_fct;
 
     double tire_circumference;
     double encoder_resolution;

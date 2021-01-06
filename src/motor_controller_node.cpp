@@ -630,9 +630,9 @@ Motor_controller::Motor_controller(mc_config_t config)
 
   this->connected = false;
 
-  this->temp_pub = config.temp_pub;
-  this->current_pub = config.current_pub;
-  this->speed_pub = config.speed_pub;
+  this->temp_cb_fct = nullptr;
+  this->speed_cb_fct = nullptr;
+  this->current_cb_fct = nullptr;
 
   PhidgetCurrentInput_create(&current_hdl);
   PhidgetTemperatureSensor_create(&temp_hdl);
@@ -651,16 +651,19 @@ Motor_controller::~Motor_controller()
 
 double Motor_controller::get_speed()
 { //returns the wheel speed in m/s
+  new_speed = false;
   return speed;
 }
 
 double Motor_controller::get_temperature()
 { //returns the temperature in °C
+  new_temp = false;
   return temperature;
 }
 
 double Motor_controller::get_current()
 { //returns the motor current in A
+new_current = false;
   return current;
 }
 
@@ -918,21 +921,57 @@ bool Motor_controller::connect_encoder()
 
 void Motor_controller::speed_cb(double speed){
   this->speed = speed;
-  std_msgs::Float64 msg;
-  msg.data = speed;
-  this->speed_pub.publish(msg);
+  new_speed = true;
+  if(speed_cb_fct != nullptr){
+    speed_cb_fct(speed);
+  }
+  //std_msgs::Float64 msg;
+  //msg.data = speed;
+  //this->speed_pub.publish(msg);
 }
 
 void Motor_controller::current_cb(double current){
   this->current = current;
-  std_msgs::Float64 msg;
-  msg.data = current;
-  this->current_pub.publish(msg);
+  new_current = true;
+  if(current_cb_fct != nullptr){
+    current_cb_fct(current);
+  }
+  //std_msgs::Float64 msg;
+  //msg.data = current;
+  //this->current_pub.publish(msg);
 }
 
 void Motor_controller::temperature_cb(double temperature){
   this->temperature = temperature;
-  std_msgs::Float64 msg;
-  msg.data = temperature;
-  this->temp_pub.publish(msg);
+  new_temp = true;
+  if(temp_cb_fct != nullptr){
+    temp_cb_fct(temperature);
+  }
+  //std_msgs::Float64 msg;
+  //msg.data = temperature;
+  //this->temp_pub.publish(msg);
+}
+
+bool Motor_controller::new_speed_val(){
+  return new_speed;
+}
+
+bool Motor_controller::new_temp_val(){
+  return new_temp;
+}
+
+bool Motor_controller::new_current_val(){
+  return new_current;
+}
+
+void Motor_controller::attach_speed_cb(cb_ptr ptr){
+  speed_cb_fct = ptr;
+}
+
+void Motor_controller::attach_current_cb(cb_ptr ptr){
+  current_cb_fct = ptr;
+}
+
+void Motor_controller::attach_temperature_cb(cb_ptr ptr){
+  temp_cb_fct = ptr;
 }
